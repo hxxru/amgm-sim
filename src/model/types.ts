@@ -1,3 +1,5 @@
+import { Eigen } from "./eigen";
+
 export type EdgeType = "internal" | "bridge" | "bottleneck";
 
 export interface Node {
@@ -48,6 +50,7 @@ export interface Diagnostics {
   basinWitness: "present" | "weak/absent" | "not applicable";
   survivalProfile: number[];
   principalMode: number[];
+  eig: Eigen;
   regime: RegimeLabel;
   reason: string;
 }

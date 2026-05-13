@@ -58,7 +58,8 @@ export function App() {
           <Gridworld
             nodes={activePreset.nodes}
             edges={activePreset.edges}
-            survivalProfile={diag.survivalProfile}
+            eig={diag.eig}
+            cycleLength={sliders.cycleLength}
             principalMode={diag.principalMode}
             showHeatmap={showHeatmap}
             showPrincipalMode={showPrincipalMode}

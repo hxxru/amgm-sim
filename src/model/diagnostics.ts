@@ -140,6 +140,7 @@ export function computeDiagnostics(
     basinWitness,
     survivalProfile: q,
     principalMode: phi1Hat,
+    eig,
     regime,
     reason,
   };
