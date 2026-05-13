@@ -48,18 +48,32 @@ export const DEFAULT_PARAMS: Params = {
   totalEnergyTarget: 3600,
 };
 
-function uniformDropPreset(_H: number, W: number, _rng: Rng, params: Params) {
-  const grid = makeEmptyGrid(_H, W);
+// Distribute the integer token budget uniformly across all cells; any
+// rounding remainder is taken up by the reservoir so totals stay exact.
+function seedUniformGrid(H: number, W: number, total: number): { grid: Grid; reservoir: number } {
+  const grid = makeEmptyGrid(H, W);
+  const N = H * W;
+  const base = Math.floor(total / N);
+  const capped = Math.min(base, 15);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) grid[y][x].r = capped;
+  }
+  const placed = capped * N;
+  return { grid, reservoir: Math.max(0, total - placed) };
+}
+
+function uniformDropPreset(H: number, W: number, _rng: Rng, params: Params) {
+  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
   return {
     grid,
-    coupling: uniformCoupling(_H, W, 1.0),
+    coupling: uniformCoupling(H, W, 1.0),
     dropSource: { kind: "uniform" as const },
-    reservoir: params.totalEnergyTarget,
+    reservoir,
   };
 }
 
 function twinSpringsPreset(H: number, W: number, _rng: Rng, params: Params) {
-  const grid = makeEmptyGrid(H, W);
+  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
   const left = { x: Math.floor(W * 0.25), y: Math.floor(H / 2) };
   const right = { x: Math.floor(W * 0.75), y: Math.floor(H / 2) };
   return {
@@ -70,7 +84,7 @@ function twinSpringsPreset(H: number, W: number, _rng: Rng, params: Params) {
       sites: [left, right] as [{ x: number; y: number }, { x: number; y: number }],
       turn: 0 as 0 | 1,
     },
-    reservoir: params.totalEnergyTarget,
+    reservoir,
   };
 }
 
@@ -80,7 +94,7 @@ function wanderingSourcePreset(
   _rng: Rng,
   params: Params,
 ) {
-  const grid = makeEmptyGrid(H, W);
+  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
   return {
     grid,
     coupling: uniformCoupling(H, W, 1.0),
@@ -90,7 +104,7 @@ function wanderingSourcePreset(
       y: Math.floor(H / 2),
       pStay: 0.5,
     },
-    reservoir: params.totalEnergyTarget,
+    reservoir,
   };
 }
 
