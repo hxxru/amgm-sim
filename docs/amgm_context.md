@@ -89,3 +89,8 @@ R        admissible readout class
 C        compatibility data
 J        dynamic regime label
 ```
+
+## Extended introduction
+
+For a fuller, from-scratch explanation of the AM-GM Boundary program and how it maps to the gridworld simulator, read [`amgm_from_scratch.md`](./amgm_from_scratch.md). That file is the recommended first context document for coding agents before they implement diagnostics.
+
