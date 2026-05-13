@@ -266,22 +266,6 @@ export function SimControls({
                 onChange={setParam(row)}
               />
             ))}
-            <label
-              className="toggle"
-              title="Pick drop sites with probability ∝ (1 − g(r)) — preferentially feed dormant cells."
-            >
-              <input
-                type="checkbox"
-                checked={params.dropBiasDormant}
-                onChange={(e) =>
-                  onParamsChange({
-                    ...params,
-                    dropBiasDormant: e.target.checked,
-                  })
-                }
-              />
-              Bias drops toward dormant cells
-            </label>
           </div>
         )}
       </section>

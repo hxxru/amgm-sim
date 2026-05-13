@@ -4,7 +4,9 @@
 // is exact: Σ r_i + reservoir = totalEnergy (all integers). SHARE
 // transfers single tokens stochastically across edges; DECAY moves
 // individual tokens to a reservoir; DROP pours the reservoir back at
-// random sites.
+// stochastically-chosen sites determined by the current DropSource.
+
+import { DropSourceState } from "./dropSource";
 
 export const LEVELS = 16;
 export const R_MAX = LEVELS - 1;
@@ -67,9 +69,6 @@ export interface Params {
   // Hazard
   mu: number;           // per-tick per-token probability of decay
 
-  // Drop biasing
-  dropBiasDormant: boolean; // if true, weight drop sites by (1 − g)
-
   // Run
   speed: number;        // steps per second (UI)
 
@@ -86,6 +85,7 @@ export interface Params {
 export interface SimState {
   grid: Grid;
   coupling: CouplingMap;
+  dropSource: DropSourceState;
   H: number;
   W: number;
 

@@ -1,4 +1,5 @@
 import { Rng } from "./rng";
+import { DropSourceState } from "./dropSource";
 import {
   CouplingMap,
   Grid,
@@ -11,28 +12,35 @@ export interface Preset {
   id: string;
   name: string;
   description: string;
+  // Build the initial substrate, initial grid, drop source, and the
+  // starting reservoir level. By default we put the entire energy budget
+  // in the reservoir so the user watches drops *build* the structure.
   makeInitial: (
     H: number,
     W: number,
     rng: Rng,
     params: Params,
-  ) => { grid: Grid; coupling: CouplingMap };
+  ) => {
+    grid: Grid;
+    coupling: CouplingMap;
+    dropSource: DropSourceState;
+    reservoir: number;
+  };
   params: Partial<Params>;
 }
 
 export const DEFAULT_PARAMS: Params = {
   // 6 ticks/s = 18 steps/s (3 phases per tick).
   speed: 18,
-  // Slack 3 → M = round(15/3) = 5 tokens per drop.
-  slack: 3,
-  alpha: 0.18,
+  // Slack 1.5 → M = round(15/1.5) = 10 tokens per drop (large bursts).
+  slack: 1.5,
+  alpha: 0.15,
   // Vitality sigmoid in token units: g(0)=0.011, g(2)=0.18, g(3)=0.5,
   // g(4)=0.82, g(R_MAX)≈1. Cells become "engaged" at r ≥ 3.
   vitalityR0: 3,
   vitalityK: 1.5,
   vitalityThreshold: 0.2,
-  mu: 0.02,
-  dropBiasDormant: false,
+  mu: 0.004,
   recomputeSpectralEvery: 8,
   fitWindow: 25,
   plotWindow: 240,
@@ -40,231 +48,75 @@ export const DEFAULT_PARAMS: Params = {
   totalEnergyTarget: 3600,
 };
 
-// Distribute the target total energy uniformly (integer-rounded) across
-// all cells. Any rounding remainder is dropped into the first cells.
-function seedUniform(H: number, W: number, total: number): Grid {
+function uniformDropPreset(_H: number, W: number, _rng: Rng, params: Params) {
+  const grid = makeEmptyGrid(_H, W);
+  return {
+    grid,
+    coupling: uniformCoupling(_H, W, 1.0),
+    dropSource: { kind: "uniform" as const },
+    reservoir: params.totalEnergyTarget,
+  };
+}
+
+function twinSpringsPreset(H: number, W: number, _rng: Rng, params: Params) {
   const grid = makeEmptyGrid(H, W);
-  const N = H * W;
-  const base = Math.floor(total / N);
-  let extra = total - base * N;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      let v = base;
-      if (extra > 0) {
-        v += 1;
-        extra -= 1;
-      }
-      grid[y][x].r = Math.min(v, 15);
-    }
-  }
-  return grid;
+  const left = { x: Math.floor(W * 0.25), y: Math.floor(H / 2) };
+  const right = { x: Math.floor(W * 0.75), y: Math.floor(H / 2) };
+  return {
+    grid,
+    coupling: uniformCoupling(H, W, 1.0),
+    dropSource: {
+      kind: "twin" as const,
+      sites: [left, right] as [{ x: number; y: number }, { x: number; y: number }],
+      turn: 0 as 0 | 1,
+    },
+    reservoir: params.totalEnergyTarget,
+  };
 }
 
-// Concentrate the target total at one (or a few) seed cells, but never
-// exceed R_MAX per cell — overflow spills to neighbouring seeds.
-function seedAt(
+function wanderingSourcePreset(
   H: number,
   W: number,
-  total: number,
-  seeds: [number, number][],
-): Grid {
+  _rng: Rng,
+  params: Params,
+) {
   const grid = makeEmptyGrid(H, W);
-  let remaining = total;
-  for (const [x, y] of seeds) {
-    const take = Math.min(remaining, 15);
-    grid[y][x].r = take;
-    remaining -= take;
-  }
-  // Any remaining tokens get sprinkled around seed[0] to keep the picture
-  // local. If still more, fall back to uniform.
-  let idx = 0;
-  while (remaining > 0 && idx < H * W) {
-    const y = Math.floor(idx / W);
-    const x = idx - y * W;
-    if (grid[y][x].r < 15) {
-      grid[y][x].r += 1;
-      remaining -= 1;
-    }
-    idx++;
-  }
-  return grid;
-}
-
-// Build a coupling map with a single low-κ "ridge" along a column.
-function couplingWithVerticalRidge(
-  H: number,
-  W: number,
-  ridgeX: number,
-  insideKappa: number,
-  ridgeKappa: number,
-): CouplingMap {
-  const map = uniformCoupling(H, W, insideKappa);
-  // Horizontal edges that cross the ridge get the lower coupling.
-  for (let y = 0; y < H; y++) {
-    if (ridgeX - 1 >= 0 && ridgeX - 1 < W - 1)
-      map.kappaH[y][ridgeX - 1] = ridgeKappa;
-  }
-  return map;
-}
-
-// Coupling with two ridges, partitioning the grid into three vertical bands.
-function couplingWithTwoRidges(
-  H: number,
-  W: number,
-  ridge1X: number,
-  ridge2X: number,
-  insideKappa: number,
-  ridgeKappa: number,
-): CouplingMap {
-  const map = uniformCoupling(H, W, insideKappa);
-  for (let y = 0; y < H; y++) {
-    if (ridge1X - 1 >= 0 && ridge1X - 1 < W - 1)
-      map.kappaH[y][ridge1X - 1] = ridgeKappa;
-    if (ridge2X - 1 >= 0 && ridge2X - 1 < W - 1)
-      map.kappaH[y][ridge2X - 1] = ridgeKappa;
-  }
-  return map;
-}
-
-// Coupling with a soft circular "barrier" — κ scales with distance from a
-// chosen ridge polygon. Smoother than the hard ridges above.
-function couplingWithSpot(
-  H: number,
-  W: number,
-  cx: number,
-  cy: number,
-  innerKappa: number,
-  outerKappa: number,
-  radius: number,
-): CouplingMap {
-  const map = uniformCoupling(H, W, outerKappa);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W - 1; x++) {
-      const mx = x + 0.5;
-      const my = y;
-      const d = Math.hypot(mx - cx, my - cy);
-      const t = Math.max(0, Math.min(1, 1 - d / radius));
-      map.kappaH[y][x] = outerKappa + (innerKappa - outerKappa) * t;
-    }
-  }
-  for (let y = 0; y < H - 1; y++) {
-    for (let x = 0; x < W; x++) {
-      const mx = x;
-      const my = y + 0.5;
-      const d = Math.hypot(mx - cx, my - cy);
-      const t = Math.max(0, Math.min(1, 1 - d / radius));
-      map.kappaV[y][x] = outerKappa + (innerKappa - outerKappa) * t;
-    }
-  }
-  return map;
-}
-
-function uniformBoard(
-  H: number,
-  W: number,
-  _rng: Rng,
-  params: Params,
-): { grid: Grid; coupling: CouplingMap } {
   return {
-    grid: seedUniform(H, W, params.totalEnergyTarget),
+    grid,
     coupling: uniformCoupling(H, W, 1.0),
-  };
-}
-
-function singleSpring(
-  H: number,
-  W: number,
-  _rng: Rng,
-  params: Params,
-): { grid: Grid; coupling: CouplingMap } {
-  return {
-    grid: seedAt(H, W, params.totalEnergyTarget, [[Math.floor(W / 2), Math.floor(H / 2)]]),
-    coupling: uniformCoupling(H, W, 1.0),
-  };
-}
-
-function twinBlocks(
-  H: number,
-  W: number,
-  _rng: Rng,
-  params: Params,
-): { grid: Grid; coupling: CouplingMap } {
-  return {
-    grid: seedUniform(H, W, params.totalEnergyTarget),
-    coupling: couplingWithVerticalRidge(H, W, Math.floor(W / 2), 1.0, 0.05),
-  };
-}
-
-function triBlocks(
-  H: number,
-  W: number,
-  _rng: Rng,
-  params: Params,
-): { grid: Grid; coupling: CouplingMap } {
-  return {
-    grid: seedUniform(H, W, params.totalEnergyTarget),
-    coupling: couplingWithTwoRidges(
-      H,
-      W,
-      Math.floor(W / 3),
-      Math.floor((2 * W) / 3),
-      1.0,
-      0.05,
-    ),
-  };
-}
-
-function softBasin(
-  H: number,
-  W: number,
-  _rng: Rng,
-  params: Params,
-): { grid: Grid; coupling: CouplingMap } {
-  return {
-    grid: seedUniform(H, W, params.totalEnergyTarget),
-    coupling: couplingWithSpot(H, W, W / 2, H / 2, 1.0, 0.1, Math.max(H, W) / 2.5),
+    dropSource: {
+      kind: "wander" as const,
+      x: Math.floor(W / 2),
+      y: Math.floor(H / 2),
+      pStay: 0.5,
+    },
+    reservoir: params.totalEnergyTarget,
   };
 }
 
 export const PRESETS: Preset[] = [
   {
-    id: "uniform",
-    name: "Uniform Board",
+    id: "uniform-drops",
+    name: "Uniform Drops",
     description:
-      "Identical κ on every edge. Drag the slack slider to see a single connected medium fragment or coalesce based on drop rhythm.",
-    makeInitial: uniformBoard,
+      "Drops at iid uniform random cells. No spatial or temporal correlation — the null hypothesis. With uniform κ, no cluster should form: tokens stay broadly distributed.",
+    makeInitial: uniformDropPreset,
     params: {},
   },
   {
-    id: "single-spring",
-    name: "Single Spring",
+    id: "twin-springs",
+    name: "Twin Springs",
     description:
-      "All initial energy at one cell. Watch the cascade radiate. Energy is then redistributed by the conserved decay/drop cycle.",
-    makeInitial: singleSpring,
+      "Drops alternate strictly between two fixed cells. Two competing clusters: when slack is small they merge into one connected medium; when slack is large they stay as separate hot spots with the rest of the grid dormant.",
+    makeInitial: twinSpringsPreset,
     params: {},
   },
   {
-    id: "twin-blocks",
-    name: "Twin Blocks",
+    id: "wandering-source",
+    name: "Wandering Source",
     description:
-      "Two strongly-coupled bands joined by one low-κ ridge. Each block mixes fast; cross-ridge equilibration is slow.",
-    makeInitial: twinBlocks,
-    params: {},
-  },
-  {
-    id: "tri-blocks",
-    name: "Three Blocks",
-    description:
-      "Three strongly-coupled vertical bands. Spectral gap reflects the slowest cross-ridge timescale.",
-    makeInitial: triBlocks,
-    params: {},
-  },
-  {
-    id: "soft-basin",
-    name: "Soft Basin",
-    description:
-      "Smooth radial κ — fast mixing near the centre, weakly-coupled periphery. Tests vitality-driven structure.",
-    makeInitial: softBasin,
+      "Drop site does a random walk on the grid (p_stay = 0.5). A single cluster forms and follows the drifting source. Watch the Fiedler contour migrate with it.",
+    makeInitial: wanderingSourcePreset,
     params: {},
   },
 ];

@@ -1,4 +1,5 @@
 import { Rng } from "./rng";
+import { DropSourceState, nextDropSite } from "./dropSource";
 import {
   cloneGrid,
   CouplingMap,
@@ -115,65 +116,76 @@ function applyDecay(
   return { grid: next, reservoir: reservoir + evap };
 }
 
-// DROP: distribute up to M tokens from the reservoir across cells.
-// M = round(R_MAX / slack), clamped to [1, R_MAX]. Each token goes to a
-// randomly picked cell that isn't already saturated; we make up to a
-// few attempts before giving up to avoid pathological full-board cases.
+// DROP: dispense up to M tokens at the site chosen by the current
+// DropSource. M = round(R_MAX / slack), clamped to [1, R_MAX]. The
+// primary site receives as much as it can hold; any overflow spills to
+// the 8-neighbourhood and beyond, so a single drop event can paint a
+// small splash when M > the headroom of the chosen cell. Returns the
+// (possibly advanced) DropSourceState.
 function applyDrop(
   grid: Grid,
   params: Params,
   reservoir: number,
   rng: Rng,
   drops: DropFlash[],
+  dropSource: DropSourceState,
 ): {
   grid: Grid;
   reservoir: number;
   dropped: boolean;
   drops: DropFlash[];
   ticksReset: boolean;
+  dropSource: DropSourceState;
 } {
   const M = Math.max(1, Math.min(R_MAX, Math.round(R_MAX / Math.max(params.slack, 1e-6))));
   if (reservoir < M) {
-    return { grid, reservoir, dropped: false, drops, ticksReset: false };
+    return { grid, reservoir, dropped: false, drops, ticksReset: false, dropSource };
   }
 
   const H = grid.length;
   const W = grid[0].length;
   const next = cloneGrid(grid);
+  const { site, source: newSource } = nextDropSite(dropSource, rng, H, W);
+  const primaryX = site.x;
+  const primaryY = site.y;
+
+  // Drop M tokens, starting at the primary site and spilling outwards
+  // in a spiral when the cell can't hold more.
   let toDrop = M;
-  let primaryX = -1;
-  let primaryY = -1;
-  const attemptsCap = 6 * M + 24;
+  const visited = new Uint8Array(H * W);
+  const queue: [number, number][] = [[primaryX, primaryY]];
+  visited[primaryY * W + primaryX] = 1;
+  const attemptsCap = 6 * M + 32;
   let attempts = 0;
-  while (toDrop > 0 && attempts < attemptsCap) {
+  while (toDrop > 0 && queue.length > 0 && attempts < attemptsCap) {
     attempts++;
-    let x: number, y: number;
-    if (params.dropBiasDormant) {
-      // Two-shot weighted pick to keep it cheap.
-      let bestX = 0, bestY = 0, bestW = -1;
-      for (let s = 0; s < 4; s++) {
-        const xx = Math.min(W - 1, Math.floor(rng() * W));
-        const yy = Math.min(H - 1, Math.floor(rng() * H));
-        const w = 1 - vitality(next[yy][xx].r, params.vitalityR0, params.vitalityK);
-        if (w > bestW) { bestW = w; bestX = xx; bestY = yy; }
-      }
-      x = bestX; y = bestY;
-    } else {
-      x = Math.min(W - 1, Math.floor(rng() * W));
-      y = Math.min(H - 1, Math.floor(rng() * H));
+    const [x, y] = queue.shift()!;
+    if (next[y][x].r < R_MAX) {
+      const amount = Math.min(toDrop, R_MAX - next[y][x].r);
+      next[y][x].r += amount;
+      toDrop -= amount;
     }
-    if (next[y][x].r >= R_MAX) continue;
-    const amount = Math.min(toDrop, R_MAX - next[y][x].r);
-    next[y][x].r += amount;
-    toDrop -= amount;
-    if (primaryX < 0) {
-      primaryX = x;
-      primaryY = y;
+    // Enqueue 4-neighbours in case we still have tokens to place.
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const li = ny * W + nx;
+      if (visited[li]) continue;
+      visited[li] = 1;
+      queue.push([nx, ny]);
     }
   }
+
   const actuallyDropped = M - toDrop;
   if (actuallyDropped === 0) {
-    return { grid, reservoir, dropped: false, drops, ticksReset: false };
+    // Couldn't place any token (board saturated). Don't reset event clock.
+    return { grid, reservoir, dropped: false, drops, ticksReset: false, dropSource: newSource };
   }
 
   const flash: DropFlash = {
@@ -188,6 +200,7 @@ function applyDrop(
     dropped: true,
     drops: [...drops, flash],
     ticksReset: true,
+    dropSource: newSource,
   };
 }
 
@@ -200,6 +213,7 @@ export function step(state: SimState, params: Params, rng: Rng): SimState {
   let drops = state.drops;
   let ticksSinceDrop = state.ticksSinceDrop;
   let tick = state.tick;
+  let dropSource = state.dropSource;
 
   switch (phase) {
     case "SHARE": {
@@ -217,10 +231,11 @@ export function step(state: SimState, params: Params, rng: Rng): SimState {
       break;
     }
     case "DROP": {
-      const out = applyDrop(grid, params, reservoir, rng, drops);
+      const out = applyDrop(grid, params, reservoir, rng, drops, dropSource);
       grid = out.grid;
       reservoir = out.reservoir;
       drops = out.drops;
+      dropSource = out.dropSource;
       if (out.ticksReset) ticksSinceDrop = 0;
       break;
     }
@@ -255,6 +270,7 @@ export function step(state: SimState, params: Params, rng: Rng): SimState {
     tick,
     nextPhase,
     lastPhase: phase,
+    dropSource,
   };
 }
 

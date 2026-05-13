@@ -44,21 +44,27 @@ function makeInitial(
   seed: number,
 ): { state: SimState; rng: Rng } {
   const rng = makeRng(seed);
-  const { grid, coupling } = preset.makeInitial(H, W, rng, params);
-  let total = 0;
+  const { grid, coupling, dropSource, reservoir } = preset.makeInitial(
+    H,
+    W,
+    rng,
+    params,
+  );
+  let inCells = 0;
   for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) total += grid[y][x].r;
+    for (let x = 0; x < W; x++) inCells += grid[y][x].r;
   }
   const state: SimState = {
     grid,
     coupling,
+    dropSource,
     H,
     W,
     tick: 0,
     nextPhase: "SHARE",
     lastPhase: null,
-    reservoir: 0,
-    totalEnergy: total,
+    reservoir,
+    totalEnergy: inCells + reservoir,
     edgeFlowH: zeros2D(H, W),
     edgeFlowV: zeros2D(H, W),
     drops: [],

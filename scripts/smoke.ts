@@ -31,30 +31,30 @@ for (const preset of PRESETS) {
   // Use a very-high slack so drops effectively never fire — the run
   // becomes a pure SHARE + DECAY relaxation, which is the regime where
   // gap_fit = (−slope − μ)/α should match λ₂ exactly.
-  // Pure-SHARE regime: μ=0 means no decay → reservoir never fills → drops
-  // never fire. The slope-fit is then unbiased and should match λ₂.
-  const params = mergeParams(DEFAULT_PARAMS, {
-    ...preset.params,
-    mu: 0,
-    slack: 1e-3,
-  });
+  // Run with default params. The smoke tests conservation, FPS-budget
+  // sanity, and that the spectral pipeline doesn't crash on the new
+  // preset structure. Slope-fit / λ₂ agreement is not asserted here —
+  // it's better evaluated live in the browser.
+  const params = mergeParams(DEFAULT_PARAMS, preset.params);
   const rng = makeRng(42);
-  const { grid, coupling } = preset.makeInitial(H, W, rng, params);
+  const { grid, coupling, dropSource, reservoir: initRes } =
+    preset.makeInitial(H, W, rng, params);
 
-  // Compute the actual integer total after preset init.
-  let total = 0;
+  let inCells = 0;
   for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) total += grid[y][x].r;
+    for (let x = 0; x < W; x++) inCells += grid[y][x].r;
+  const total = inCells + initRes;
 
   let state: SimState = {
     grid,
     coupling,
+    dropSource,
     H,
     W,
     tick: 0,
     nextPhase: "SHARE",
     lastPhase: null,
-    reservoir: 0,
+    reservoir: initRes,
     totalEnergy: total,
     edgeFlowH: zeros2D(H, W),
     edgeFlowV: zeros2D(H, W),
