@@ -1,89 +1,85 @@
 # Roadmap
 
-The MVP makes the spectral gap visible and nothing else. Everything else is downstream of that. This document collects the natural next moves so we can resist them while building the MVP and have them ready when the MVP is done.
+The MVP makes the spectral gap visible and lets the user manipulate it via the slack knob and the choice of DropSource. This document collects the natural next moves so we can resist them while shipping the MVP and have them ready when the MVP is done.
 
-## Phase 2 — Spectral richness
+## Phase 2 — More DropSources
 
-Layer additional observables on the same CA, before introducing any AM-GM framing.
+The DropSource abstraction is the natural extension point. Each new source is a discriminated-union variant + ~20 lines in `src/sim/dropSource.ts` + a preset entry.
 
-- **Higher modes.** Display `λ_3`, `λ_4`, … and the corresponding eigenvectors as additional tints. Mostly pedagogical, but useful for showing why the gap matters.
-- **Per-component diagnostics.** When components ≥ 2, allow the user to select which component to inspect.
-- **Eigenmode browser.** A small dropdown that lets the user view `φ_k` for any `k ≤ 5`. Connect it to a side text explaining what each mode represents.
-- **Cheaper spectral solver.** Lanczos with reorthogonalisation or shift-invert power iteration if the Jacobi cost becomes noticeable.
-- **Time-of-equilibration overlay.** Per-cell estimated time to reach `e^-1` of its initial deviation from the mean. The "thermal" geometry counterpart of the Fiedler cut.
+Highest payoff, in order:
+
+- **Hawkes / spatial self-excitation.** Each drop biases the next drop toward its own neighbourhood. State carries `(lastX, lastY, decayedExcitation)`. Site sampled from a Gaussian centred on `(lastX, lastY)` whose σ shrinks as excitation rises. Produces runaway clusters that grow, peak, then collapse when decay catches up.
+- **Regime-switching Markov.** Hidden state ∈ {1, …, K}; each state has its own spatial drop distribution (e.g., a centroid + spread). Transitions every tick with a small `p_switch`. The cluster regime visibly *switches* on a slow timescale — Fiedler cut reorients each switch. Closest to the AM-GM picture of multiple basins.
+- **State-coupled foraging.** Drop site sampled with weight `∝ (1 − g(r))` — preferentially feed dormant cells. Generates a "feeding front" that migrates across the grid as previously-bright regions decay. Genuinely state-coupled forcing.
+
+Other DropSource ideas, lower priority:
+
+- **Tribe** — drops at N fixed sites, chosen uniformly each drop. Generalises Twin Springs.
+- **Lévy flight** — most drops near the previous, occasional long jumps. Heavy-tailed spatial correlation.
+- **Periodic** — drop site cycles through a fixed path (e.g., the grid perimeter). Pedagogically odd but a good control.
 
 ## Phase 3 — AM-GM diagnostics layer
 
-Reintroduce the AM-GM language as an *interpretive* layer on top of the spectral observables. Hidden behind a toggle so the MVP story is preserved.
+Re-introduce the AM-GM language as an *interpretive* layer on top of the spectral observables. Hidden behind a toggle so the MVP story is preserved.
 
-- **Compression strength** `(λ_2) · Δ` where `Δ` is a user-set cycle length (or a fixed read-out).
+- **Compression strength** `λ_2 · Δ` where `Δ` is a user-set cycle length (defaults to fit window).
 - **Scalarity defect** from rank-one approximation of a survival-style profile.
-- **Retained-mode count** at a tolerance, surfaced via the eigenmode browser.
-- **Leakage ratio**: identify "bridges" as edges whose removal raises `λ_2` most. Quantify cross-cut weight versus within-component gap. Replaces the supplied-bridge convention of the previous MVP with an emergent-bridge identification.
-- **Suggested regime label**: only after the above are computed, with the cautious copy from `docs/amgm_from_scratch.md`.
-- **Basin witness**: heuristic localisation of higher modes on candidate sub-regions.
+- **Retained-mode count K** at a tolerance, surfaced via an eigenmode browser.
+- **Leakage ratio** between connected components when there are multiple — quantifies how "almost-disconnected" near-clusters are.
+- **Suggested regime label** ("scalar interface likely / finite-band / boundary compromised"), with the cautious copy from `docs/amgm_from_scratch.md`.
+- **Basin witness** — heuristic localisation of higher eigenmodes on sub-regions.
 
-## Phase 4 — User intervention
+## Phase 4 — Substrate variation
+
+Reintroduce non-uniform κ-maps as an optional axis alongside the drop pattern. Composed presets like "Twin Springs on Twin Blocks" (drops alternating between two springs on a substrate with a low-κ ridge between them) get genuinely rich.
+
+- κ slider palette (off / weak / medium / strong) for hand-painted substrates.
+- Built-in κ generators: random, blocked, gradient, radial.
+- Composability: each preset names a DropSource AND a κ-map generator.
+
+## Phase 5 — User intervention
 
 Move from observer mode to painter mode. Adds engagement, costs some math clarity.
 
-- **Click to drop food** — manual pulses of `ε` on chosen cells.
-- **Click to kill** — force-cull a cell.
-- **Drag to draw walls** — mark cells permanently empty so structure can be sculpted.
+- **Click to drop food** — manual pulses (skip the queue).
+- **Click to kill** — force a cell's r to 0.
+- **Drag to draw walls** — mark cells with κ_ij = 0 for incident edges.
 - **Drag to draw a partition** — user proposes a candidate cut; the app scores it against `φ_2` (cosine similarity) and computes the partition's empirical leakage.
 
-## Phase 5 — Stochastic / particle layer
+## Phase 6 — Spectral richness
 
-Replace or augment the deterministic share with a particle/walker visualisation.
+- **Higher modes.** Display `λ_3`, `λ_4`, … and their eigenvectors as alternative tints.
+- **Per-component diagnostics.** When components ≥ 2, allow the user to select which component to inspect.
+- **Eigenmode browser.** Dropdown to view `φ_k` for any `k ≤ 5`.
+- **Time-of-equilibration overlay.** Per-cell estimated time to reach `e⁻¹` of its current deviation from the local mean.
 
-- **Walkers.** A small population of stochastic walkers performing random walks on the alive subgraph with killing. The macroscopic resource heat is recovered as walker density.
-- **Forager animation.** Render food discovery as a brief sparkle on the chosen cell with a tiny "trail" suggesting a forager landed there.
-- **Per-tick flow arrows.** During SHARE, draw subtle directional arrows showing net flow between cells. Off by default; useful for the rule-explanation mode.
+## Phase 7 — Reproducibility and sharing
 
-## Phase 6 — Time-scale and read-out controls
-
-Tools for exploring the AM-GM intuition that "boundary type depends on the cycle window."
-
-- **Δ-sweep panel.** A small chart that fixes the current alive graph and sweeps `Δ`, showing how compression strength varies. Implements the lesson in `docs/amgm_from_scratch.md` §10.
-- **Toggle: deterministic vs. stochastic share.** Same expected behaviour, but the stochastic version is the literal microscopic CA; the deterministic one is the mean-field limit.
-- **Toggle: synchronous vs. asynchronous CULL/BIRTH.** Mostly a robustness experiment.
-
-## Phase 7 — Topology
-
-Stop assuming a square 4-neighbour grid.
-
-- **Hex grid** (6-neighbour). Different Laplacian spectrum; the Fiedler cut looks different.
-- **Continuous-position nodes.** Cells become points with arbitrary positions; adjacency is range-based.
-- **Larger grids** (40×40, 64×64). Requires a real eigensolver (Lanczos).
-- **Non-Euclidean adjacency.** Edges can have weights from terrain or barrier maps.
-
-## Phase 8 — Reproducibility and sharing
-
-- **Seed + preset + slider state in URL hash.** Already mentioned in the MVP; revisit if the MVP shipped without it.
+- **URL state encoding.** `preset + seed + slider state` in the URL hash. Paste a link → reproduce a snapshot.
 - **Export run as JSON.** State trajectory + spectral history; analyse in a notebook.
-- **Side-by-side comparison.** Two simulations on the same screen with synchronised tick.
+- **Side-by-side comparison.** Two simulations on the same page with synchronised tick.
+
+## Phase 8 — Performance
+
+- **Lanczos in a Web Worker.** Frees the main thread for rendering at large N.
+- **Uint8Array for r.** Replaces the per-cell object literal; cuts allocation pressure substantially.
+- **Spatial-temporal coarsening for the spectral pipeline.** Downsample to a coarser grid before computing Laplacian if `N > 80`.
 
 ## Phase 9 — Estimation from trajectories
 
-The path toward Document 3-style empirical extraction.
-
-- Sample sparse trajectories from the running CA.
-- Estimate `λ_2` of the underlying generator from those trajectories using a finite-window estimator.
-- Compare the estimated gap to the true `λ_2` for various sampling densities.
-- This is the longest-horizon item; it has its own conceptual stack.
+The long-horizon item: recover `λ₂` from sampled trajectories (Document 3-style). Beyond the current MVP scope; this is its own conceptual stack.
 
 ## Parameters we may want to expose later
 
-Collected here so we do not have to invent them again:
+Collected here so we don't have to invent them again:
 
-- Asymmetric `α` per edge (e.g., terrain).
-- Non-uniform `r_death` per cell (some cells are "harder to kill").
-- Heterogeneous `p_food` map (some regions are more forageable).
-- Resource decay coefficient: `r_i ← r_i · (1 − decay)` independent of sharing.
-- Maximum capacity `r_max` with capped DISCOVER pulses.
-- Variable `T_db` schedule (e.g., birth/death faster early, slower later).
-- A "stress" event slider that temporarily raises `r_death`.
-- Configurable initial-condition pulse for the convergence-plot tracker — start the system from a delta function on a chosen cell to demonstrate spreading explicitly.
+- Asymmetric `κ` per edge direction (e.g., terrain).
+- Non-uniform `μ` per cell (some cells are "harder to kill").
+- Variable `α` per region (some areas mix faster).
+- Resource cap per cell ≠ R_MAX (heterogeneous capacity).
+- Variable `T_share / T_decay / T_drop` (the phases fire at different rates).
+- Stress events that temporarily raise `μ` globally or locally.
+- Configurable initial-condition pulses (start the system from a delta on a chosen cell).
 
 ## What we will *not* do
 
@@ -93,4 +89,4 @@ To keep the MVP scope honest, the following are out:
 - Continuous-time stochastic simulation (Gillespie). The discrete tick rule is the whole point.
 - "Solving" AM-GM rigorously. This is a pedagogical sandbox.
 - Mobile-first design. Desktop browser is the target.
-- 3D rendering. The 2D plane is the model.
+- 3D rendering.

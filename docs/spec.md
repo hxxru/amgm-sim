@@ -2,108 +2,126 @@
 
 ## Purpose
 
-A lightweight web simulation that lets a user watch a four-phase cellular automaton on a 2D grid and *discover the spectral gap* of the resulting alive-cell graph. The discovery happens two ways:
+A lightweight web simulation that lets a user watch a three-phase, token-quantised cellular automaton on a 2D grid and *discover the spectral gap* of its vitality-weighted Laplacian. The discovery happens three ways:
 
 1. as a fitted slope on a live convergence plot;
-2. as a Fiedler-cut contour painted on the gridworld plane itself.
+2. as a Fiedler-cut contour painted on the gridworld plane itself;
+3. as a connected-component count badge that flags when the active subgraph splits.
 
-The MVP earns the right to talk about spectral gaps. AM-GM diagnostics, partition scoring, and richer interventions are deferred to later phases (`docs/roadmap.md`).
+The MVP earns the right to talk about spectral gaps and emergent individuality. AM-GM diagnostics, partition scoring, and richer interventions are deferred (see `docs/roadmap.md`).
 
 ## Core layout
 
 Single-page, three-pane layout.
 
-### Left pane: controls
+### Left pane — controls
 
 - Preset selector.
-- Random-init density slider.
-- Slider: share rate `α`.
-- Slider: food discovery rate `p_food`.
-- Slider: death threshold `r_death` (and steepness `β`).
-- Slider: birth threshold `r_birth` (and probability `γ`).
-- Slider: global speed (ticks per second).
-- Toggle: pause/play.
-- Button: reseed random / reset.
+- Run buttons: Play / Pause, Step (single phase), Reset, Reseed.
+- Seed readout.
+- **Basic sliders:**
+  - **Slack** (log scale, ~0.4–25) — the headline knob. `M_drop = round(15 / slack)`. High slack → small drops → tokens dispersed → one connected cluster. Low slack → large drops → tokens concentrated → fragmented dormant landscape.
+  - **Share rate α** (0.01–0.24).
+  - **Decay μ** (0.001–0.1).
+  - **Speed** (1–180 steps/s).
+- **Visualisation toggles:** Fiedler tint + contour, κ + flow edges, phase strip.
+- **Advanced expander:**
+  - Vitality `r₀` and `k`.
+  - Active threshold.
+  - **Grid size** `N×N` (12–80, takes effect on Reset).
+  - **Avg tokens / cell** (1–12, takes effect on Reset).
+  - Spectral recompute cadence.
+  - Fit window, plot window.
 
-### Center pane: gridworld canvas
+### Centre pane — gridworld canvas
 
-- 20×20 cells rendered to `<canvas>`.
-- Empty cells drawn as a faint background; alive cells filled with a heat colour proportional to resource level.
-- Phase strip along the bottom: four labels — **share**, **discover**, **cull**, **birth** — with the currently firing phase highlighted.
-- Fiedler-cut overlay (toggleable): each alive cell tinted by the sign of `φ_2`; a contour drawn along sign changes.
-- Optional: a thin marker showing the connected component count for the current alive subgraph.
+- `N × N` cells rendered to `<canvas>` (cell size auto-scales to fit a ~760 px box; clamped to 9–28 px).
+- Each cell's colour is `viridis(r / 15)`. Dormant cells (`g(r) < 5 %`) get a dark overlay.
+- Edges drawn between alive 4-neighbour pairs: line thickness/opacity ∝ `κ_ij`, yellow glow ∝ recent token flow (decays over ~5 frames).
+- Drop events flash an expanding yellow ring at the primary site.
+- Fiedler overlay (toggleable): alive cells in the largest active component tinted by `sign(φ_2)` with alpha ∝ `|φ_2|/max|φ_2|`; a white contour traces edges where `φ_2` changes sign.
+- Phase strip below the grid highlights `SHARE / DECAY / DROP`.
+- Below the canvas: a one-line readout — `tick · next phase · reservoir tokens · M_drop · active/total`.
+- Perf HUD overlay (bottom-right): `FPS · applied/target steps/s · ok | lagging`.
 
-### Right pane: spectral diagnostics
+### Right pane — diagnostics
 
-- **Convergence plot**: `log ‖r⟂(t)‖` versus `t`, where `r⟂` is the part of the resource vector orthogonal to the principal mode `φ_1`. After a transient, this is a line with slope `−λ_2`.
-- **Fitted gap**: least-squares slope over the most recent sliding window, displayed as a number with units of inverse ticks.
-- **Computed gap**: `λ_2` of the current alive-subgraph Laplacian, recomputed every `N_spec` ticks.
-- **Component count**: number of connected components in the alive subgraph; flags when the graph splits (and `λ_2` becomes a per-component quantity).
+- **Spectral table:**
+  - `λ₂` (Laplacian) — second-smallest eigenvalue of the vitality-weighted Laplacian on the largest active component.
+  - `gap (fitted)` — `(−slope − μ) / α` from the convergence plot.
+  - Disagreement % between the two.
+  - Components count (badged "split" when ≥ 2).
+  - Fit `R²`.
+- **Energy budget table:**
+  - Total tokens (conserved integer).
+  - Reservoir (tokens currently in the atmosphere).
+  - `M_drop` (tokens dispensed per drop event).
+  - `τ_drop` (expected ticks between drop events at steady state).
+  - Active cells.
+- **Convergence plot** — `log ‖r⟂(t)‖` over the last `plotWindow` ticks, with an overlaid orange dashed fit line whenever the fit is valid.
+- A short observational copy paragraph reinforcing the slack→slope link.
 
-## Main controls
+## Sliders, in detail
 
-### Sliders
+| Slider          | Symbol  | Default | Range          | Notes |
+| --------------- | ------- | ------- | -------------- | ----- |
+| Slack           | —       | 1.5     | log [0.4, 25]  | `M = round(15 / slack)`; clamped to `[1, 15]`. |
+| Share rate      | α       | 0.15    | [0.01, 0.24]   | Stability: α · max-degree · max(κ · g²) < 1. |
+| Decay           | μ       | 0.004   | [0.001, 0.1]   | Per-tick, per-token probability of evaporating to reservoir. |
+| Speed           | —       | 18 s/s  | [1, 180]       | 3 phases per tick; default ≈ 6 ticks/s. |
+| Vitality r₀     | r₀      | 3       | [0.5, 12]      | Sigmoid centre, in token units. |
+| Vitality k      | k       | 1.5     | [0.2, 6]       | Sigmoid steepness. |
+| Active threshold | —      | 0.2     | [0.01, 0.5]    | g(r) above this → cell counted in spectral. |
+| Grid size N     | —       | 50      | [12, 80]       | Square grid. Resets on change. |
+| Avg tokens/cell | —       | 4       | [1, 12]        | `totalEnergy = N² · this`. Resets on change. |
+| Spectral cadence | —      | 8       | [1, 60] ticks  | How often λ₂ / φ₂ are recomputed. |
+| Fit window      | —       | 25      | [6, 200]       | Samples in the slope fit. |
+| Plot window     | —       | 240     | [60, 600]      | Samples drawn on the convergence plot. |
 
-| Slider          | Symbol     | Default | Notes                                                            |
-| --------------- | ---------- | ------- | ---------------------------------------------------------------- |
-| Share rate      | `α`        | 0.15    | Must satisfy `α · max_degree < 0.5` to keep the share step stable. |
-| Food discovery  | `p_food`   | 0.01    | Per-cell-per-tick probability of a forager event.                |
-| Discovery size  | `ε`        | 0.5     | Magnitude of each food pulse.                                    |
-| Death threshold | `r_death`  | 0.2     | Below this, cells start dying.                                   |
-| Death steepness | `β`        | 0.3     | Maximum per-(death-tick) probability of dying when r = 0.        |
-| Birth threshold | `r_birth`  | 0.6     | Neighbours above this count as "healthy."                        |
-| Birth rate      | `γ`        | 0.05    | Per-empty-cell-per-(birth-tick) probability of birth, given k healthy neighbours. |
-| Healthy k       | `k`        | 2       | Minimum healthy alive neighbours for an empty cell to be eligible. |
-| Seed resource   | `r_seed`   | 0.5     | Resource level of a newly born cell.                             |
-| Speed           | (ticks/s)  | 30      | Rendering and tick rate.                                         |
+## Presets (v1)
 
-### Toggles
+All current presets use uniform κ = 1 and a uniformly-seeded initial grid (`r = floor(total / N²)` per cell). They differ only in the DropSource.
 
-- Show resource heatmap.
-- Show Fiedler tint.
-- Show Fiedler contour.
-- Show phase strip.
-- Show component-count badge.
+1. **Uniform Drops** — iid uniform site per drop. Null hypothesis; no cluster forms.
+2. **Twin Springs** — strict alternation between two fixed cells.
+3. **Wandering Source** — random walk on the grid (`p_stay = 0.5`).
 
-## Presets
-
-MVP presets, all on the same 20×20 grid:
-
-1. **Random scatter** — uniform alive density, used to demonstrate spontaneous structure formation.
-2. **Twin blobs** — two ~50-cell blobs joined by a 2-cell neck. The canonical "watch the gap appear" preset.
-3. **Single neck** — one elongated blob with an internal bottleneck. Shows finite-band-style memory inside a single connected component.
-4. **Archipelago** — three or four small disconnected blobs. `λ_2` is dominated by the *largest* component; component count > 1 is flagged.
-
-Each preset supplies an initial `Grid` and a set of slider defaults that produce its canonical behaviour.
+See `docs/presets.md` for the expected qualitative behaviour and `docs/roadmap.md` for queued additions (Hawkes self-excitation, regime-switching Markov, state-coupled foraging).
 
 ## Pedagogical script
 
-The app is considered to "work" if a curious viewer can run through the following in five minutes:
+The app is considered to "work" if a curious viewer can run through the following in under five minutes:
 
-1. Load Twin Blobs. Hit play. The population stabilises within a few seconds.
-2. The convergence plot drops fast at first (initial pulse spreading across each blob), then settles into a straight line. The slope is reported.
-3. Toggle the Fiedler overlay. The two blobs are tinted differently and a contour appears along the neck.
-4. Drag the share-rate slider down. The convergence-plot slope flattens. The number drops. The user has watched the gap *become* a thing.
-5. Switch to Single neck. Repeat. The Fiedler cut now runs across the bottleneck *inside* a single connected component.
+1. Load Twin Springs. The grid is uniformly lit; drops alternate at two visible sites.
+2. Drag slack down (slider left). M_drop grows; drops dump big bursts. Cells around the two sites brighten dramatically; the rest of the grid darkens as μ drains tokens that no longer get replenished. Component count goes 1 → 2. Fiedler contour appears between the two clusters. λ₂ drops.
+3. Drag slack back up. M_drop falls; drops sprinkle widely; cells return to baseline; component count goes 2 → 1; λ₂ recovers.
+4. Switch to Wandering Source. Watch a single cluster drift with the moving drop site. Fiedler vector is meaningless (single cluster) or follows the drift direction.
+5. Switch to Uniform Drops. The system equilibrates to a noisy near-uniform state; no persistent cluster forms. `λ₂` may still be reported but is dominated by uniform-grid geometry.
 
 ## Non-goals for the MVP
 
-- AM-GM regime classification (compression strength, scalarity defect, leakage ratio, regime labels). These are a later phase; see `docs/roadmap.md`.
-- User-drawn partitions or click-to-paint interventions.
+See `README.md` for the full list. The high-level ones:
+
+- AM-GM regime classification.
+- User intervention (click-to-add-food, click-to-kill, drag-to-paint-walls).
 - Particle / walker overlay.
-- Hexagonal or non-grid topologies.
-- Trajectory estimation, parameter inference, or Doc-3-style empirical extraction.
-- Headless / batch simulation mode.
+- Hex grids, non-Euclidean topologies.
+- Headless / batch run mode.
 
 ## Implementation phases
 
-1. State types + presets + random init.
-2. Four-phase `tick` function (deterministic share, stochastic discover/cull/birth with a seedable RNG).
-3. Canvas render + phase strip + speed control.
-4. Alive-subgraph Laplacian + smallest-two eigenpair solver.
-5. Fiedler tint + contour overlay.
-6. `r⟂(t)` tracker + sliding-window slope fit + convergence plot.
-7. Spectral readout panel + component-count badge.
-8. Tooltips, tuned slider defaults, README polish.
+These are the natural increments; the present codebase has cleared phase 8.
 
-Each phase is independently shippable and worth verifying in a browser before moving on.
+1. State types + presets + seedable PRNG.
+2. Three-phase pure `step()` function.
+3. Canvas render + phase strip + speed control.
+4. DropSource abstraction.
+5. Active-subgraph builder + Jacobi eigensolver for `N ≤ 150`.
+6. Lanczos eigensolver for larger grids; sparse matvec.
+7. Fiedler tint + contour overlay.
+8. `r⟂(t)` tracker + sliding-window slope fit + convergence plot.
+9. Spectral readout panel + component-count badge.
+10. Perf HUD + configurable grid size.
+11. Drop-pattern presets (uniform, twin, wander).
+
+Phase 12 and beyond are in `docs/roadmap.md`.

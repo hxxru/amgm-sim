@@ -1,155 +1,119 @@
 # Preset Scenarios
 
-All presets share the 20×20 grid and the four-phase tick. They differ in their initial `alive` mask, initial resource levels, and slider defaults tuned for clarity.
+All v1 presets share the same substrate (uniform `κ = 1` on the configured `N × N` grid) and the same initial condition (`r = floor(total / N²)` per cell, with any rounding remainder in the reservoir). They differ **only in the DropSource** — the stochastic process that chooses where each drop lands. This isolates one variable: the spatiotemporal pattern of the forcing.
 
-## Preset 1: Random Scatter
+The headline pedagogical lever for every preset is **slack**:
 
-### Setup
+- High slack → `M_drop` small → tokens dispersed across many cells → most cells stay above vitality threshold → one connected active component → moderate `λ₂`.
+- Low slack → `M_drop` large → tokens concentrated → most cells decay below threshold → fragmented dormant landscape with hot islands → small `λ₂` per island and `components ≥ 2`.
 
-Each cell is independently alive with probability `p_alive = 0.35`. Initial resource drawn uniformly from `[0.2, 0.8]`.
+## Preset 1: Uniform Drops
 
-### Slider defaults
+### DropSource
 
 ```text
-α        = 0.15
-p_food   = 0.01
-ε        = 0.5
-r_death  = 0.2
-β        = 0.3
-r_birth  = 0.6
-γ        = 0.05
-k        = 2
-r_seed   = 0.5
-T_db     = 10
+{ kind: "uniform" }
+nextDropSite: uniform random over all cells, iid each drop.
 ```
+
+No spatial or temporal correlation.
 
 ### Expected behaviour
 
-For the first 30–60 ticks, isolated alive cells die off (no healthy neighbours) and pockets of denser scatter consolidate into small blobs. The number of connected components decreases over time and then stabilises. The convergence plot is jagged during this transient and may not produce a stable slope fit.
+The null hypothesis. Tokens get scattered uniformly over time. With μ small relative to drop rate, the grid stays near its initial uniform state; with μ large, you see a noisy bath of randomly-bright cells. No coherent cluster ever forms.
 
-### Pedagogical point
-
-Structure emerges from purely local rules; the user is not asked to draw it.
-
-## Preset 2: Twin Blobs
-
-### Setup
-
-Two compact alive blobs: roughly a 6×6 square centred at `(4,10)` and a 6×6 square centred at `(15,10)`. Joined by a 2-cell-wide neck along row 10 between columns 7 and 12. Initial resource `r = 0.5` everywhere alive.
-
-### Slider defaults
+### Expected diagnostics at defaults
 
 ```text
-α        = 0.15
-p_food   = 0.005     (lower than random scatter; blobs are already fed)
-ε        = 0.5
-r_death  = 0.15
-β        = 0.2
-r_birth  = 0.7
-γ        = 0.02       (lower; we want topology stable, not growing)
-k        = 3
-r_seed   = 0.5
-T_db     = 20         (slower than random; quasi-static is the point)
-```
-
-### Expected behaviour
-
-Topology is essentially fixed for many ticks. Within each blob, resources equilibrate rapidly under the share step; across the neck, equilibration is slow. The convergence plot settles into a clean line within 30 ticks. The Fiedler overlay tints the left blob one colour, the right blob the other, with a contour through the neck.
-
-### Expected diagnostics
-
-```text
-λ_2 (computed)       : 0.04–0.08
-fitted slope         : matches λ_2 within ~10% after the transient
-component count      : 1
-Fiedler-cut location : through the neck
+components       : 1 (one big component covering most of the grid, with
+                   transient holes where decay temporarily wins)
+λ₂ (Laplacian)   : ~0.005–0.015 — dominated by uniform-grid geometry,
+                   not by any cluster structure
+gap (fitted)     : approximately matches λ₂ when fit window is clean
+Fiedler contour  : a roughly straight bisection of the grid, drifting
+                   over time as noise reshuffles φ_2
 ```
 
 ### Pedagogical point
 
-This is the canonical "watch the gap appear" preset. Dragging share rate `α` down flattens the convergence slope and shrinks the reported gap; dragging it up steepens the slope. Closing the neck (e.g., raising `r_birth` so neck cells die) drops `λ_2` further.
+Tokens *flowing freely* and *being deposited randomly* aren't enough to make individuality structure. You need correlation in the forcing — or pre-existing substrate structure — for a cluster to crystallise.
 
-## Preset 3: Single Neck
+## Preset 2: Twin Springs
 
-### Setup
-
-One elongated alive region: a `4 × 15` horizontal bar with an internal pinch at columns 7–8 reduced to a single row. All resource initialised to `r = 0.5`.
-
-### Slider defaults
+### DropSource
 
 ```text
-α        = 0.15
-p_food   = 0.005
-ε        = 0.5
-r_death  = 0.15
-β        = 0.2
-r_birth  = 0.7
-γ        = 0.02
-k        = 3
-r_seed   = 0.5
-T_db     = 20
+{ kind: "twin",
+  sites: [(W·0.25, H/2), (W·0.75, H/2)],
+  turn:  0 | 1 }
+nextDropSite: alternates strictly between sites[0] and sites[1].
 ```
 
 ### Expected behaviour
 
-Only one connected component. Internal Laplacian gap is dominated by the long path through the pinch. Convergence plot settles, slope is moderately small. Fiedler vector splits the bar at the pinch, so the contour lies inside a single component.
+At default slack ≈ 1.5, the alternation feeds the same neighbourhood every two ticks; a coherent cluster forms around each spring. The two clusters compete: if slack is high enough that drops spread tokens across many cells (M small), the two clusters merge into one connected medium. If slack is low (M large, ~14–15), each drop dumps near-saturation onto its spring's local cell and the rest of the grid decays into dormancy → two isolated islands.
 
-### Expected diagnostics
+### Expected diagnostics at defaults
 
 ```text
-λ_2 (computed)       : 0.06–0.10
-fitted slope         : matches λ_2 within ~10% after the transient
-component count      : 1
-Fiedler-cut location : at the pinch
+components       : 1 at moderate slack, 2 at low slack
+λ₂ (Laplacian)   : 0.003–0.02 depending on slack
+Fiedler contour  : runs near the vertical midline of the grid,
+                   bisecting the two clusters when they're distinct
 ```
 
 ### Pedagogical point
 
-Spectral bisection is not about "two clusters" — it is about the slowest direction of internal mixing, which can sit inside a single visible component when the geometry has a bottleneck.
+Two periodically-fed sites are the simplest spatially-correlated forcing. The merge/split transition as slack changes is the canonical pedagogical demo: drag slack and watch the count switch.
 
-## Preset 4: Archipelago
+## Preset 3: Wandering Source
 
-### Setup
-
-Three or four small disconnected blobs of 6–12 cells each, separated by entirely-empty corridors. Initial resource `r = 0.5`.
-
-### Slider defaults
+### DropSource
 
 ```text
-α        = 0.15
-p_food   = 0.005
-ε        = 0.5
-r_death  = 0.1
-β        = 0.2
-r_birth  = 0.8       (high; we don't want bridging births in the MVP)
-γ        = 0.01
-k        = 3
-r_seed   = 0.5
-T_db     = 30        (very slow; we want stable archipelago)
+{ kind: "wander", x: floor(W/2), y: floor(H/2), pStay: 0.5 }
+nextDropSite:
+  with probability pStay → return (x, y)
+  else                    → step to a uniformly-chosen 4-neighbour
+                             (clamped to the grid)
 ```
+
+The drop site is a random walk on the grid with average step length `(1 − pStay)`.
 
 ### Expected behaviour
 
-Multiple disconnected components. The Laplacian has multiplicity > 1 at zero. `λ_2` (the second-smallest eigenvalue overall) is therefore also 0, but the MVP reports `λ_2` of the *largest* component, which is well-defined and finite. The component-count badge displays 3 or 4.
+A single coherent cluster forms around the current source location and drifts as the source walks. At low slack, the cluster is intense but moves slowly relative to its decay timescale, so it leaves a slowly-fading trail behind. At high slack the cluster is more diffuse and the trail blurs out.
 
-### Expected diagnostics
+### Expected diagnostics at defaults
 
 ```text
-λ_2 (largest comp.)  : depends on the largest blob's shape
-component count      : 3 or 4
-Fiedler-cut location : inside the largest blob (since the cross-component
-                       Fiedler is degenerate, we restrict to the largest
-                       component)
+components       : 1 — single moving cluster
+λ₂ (Laplacian)   : varies smoothly as the cluster's shape changes
+Fiedler contour  : tracks the drift direction; oriented perpendicular
+                   to the cluster's motion (the "in front of" vs
+                   "behind" halves of the moving cluster)
 ```
 
 ### Pedagogical point
 
-When the graph already splits, "spectral bisection" reduces to "inside the biggest piece, which way does it want to split?" Disconnection is its own diagnostic, separate from gap size, and the MVP reports both.
+The spectral structure isn't an immutable property of the grid; it's an immutable property of the *current dynamics*. As the cluster moves, `λ₂` and `φ_2` smoothly move with it.
 
-## Future presets (not in MVP)
+## Tuning notes
 
-See `docs/roadmap.md`:
+For all presets, the key parameter triplet is `(slack, α, μ)`:
 
-- Multi-basin interpretable (two basins inside a single component, sharper than Single Neck).
-- Cycle-time transition (same spatial configuration; only `T_db` and `α` vary).
-- Forager-driven instability (high `p_food` localised in a corner, demonstrating sustained asymmetry).
+- **Slack** controls drop magnitude and therefore spatial concentration.
+- **α** controls how fast tokens flow between cells given a heightdifference. High α → equilibration faster than decay → clusters spread out.
+- **μ** controls how fast unspent tokens leave cells. High μ → fast turnover → small steady-state `Σ r`.
+
+If you want **sharper** clusters: lower slack (bigger drops) and lower α (slower sharing) and higher μ (faster decay outside the drop region).
+
+If you want **smoother** clusters: higher slack (smaller drops) and higher α (faster sharing) and lower μ (slower decay).
+
+## Future presets (not in v1)
+
+See `docs/roadmap.md`. Queued for v2:
+
+- **Hawkes** — spatial self-excitation: each drop biases the next toward its neighbourhood; clusters grow runaway.
+- **Regime-switching Markov** — hidden state ∈ {1, …, K}; each state has its own spatial drop distribution; transitions slowly. Most "AM-GM-like" preset — multiple basins with interpretable regime semantics.
+- **Foraging** — drops biased toward low-`g(r)` (dormant) cells; the cluster migrates as a feeding front.

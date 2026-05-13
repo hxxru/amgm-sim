@@ -4,19 +4,22 @@
 
 **Gridworld Boundary Diagnostics**
 
-A four-phase cellular automaton where alive cells share a scarce resource. The simulation runs forward as a clearly readable local rule. Watch the convergence plot collapse to a straight line — its slope is the spectral gap of the current alive subgraph, and the Fiedler-cut contour shows that gap as a soft boundary on the grid.
+A token-quantised cellular automaton where alive cells share a scarce resource. The simulation runs forward as a clearly readable local rule. Watch the convergence plot collapse to a straight line — its slope is the spectral gap of the current alive subgraph, and the Fiedler-cut contour shows that gap as a soft boundary on the grid.
 
 ## Short intro
 
-Each tick, four things happen in order: cells share resources with their alive neighbours; foragers stochastically drop new resource; every few ticks, depleted cells may die; and empty cells with healthy neighbours may be born. Move the sliders to change those rates. The convergence plot and the Fiedler overlay both surface the same number — the spectral gap of the alive-cell graph — as the dynamics evolve.
+Each tick, three things happen in order: **share** (tokens move between adjacent alive cells with a probability that grows with both cells' vitality), **decay** (each token in each cell has a small probability of evaporating into the reservoir), and **drop** (when the reservoir reaches `M_drop` tokens, dispense them at a site chosen by the current source). Energy is exactly conserved: `Σ tokens-in-cells + reservoir = total`.
+
+Drag the **Slack** slider to change how concentrated each drop is. The diagnostics — convergence plot, λ₂, component count — respond visibly.
 
 ## Pedagogical anchors
 
 Preferred copy:
 
 ```text
-The slope of the convergence plot is the spectral gap of the current alive subgraph.
-Drag the share-rate slider. The slope flattens, the gap drops.
+The slope of the convergence plot is the spectral gap of the current
+alive subgraph. Drag the share-rate slider. The slope flattens, the
+gap drops.
 ```
 
 ```text
@@ -24,85 +27,142 @@ The Fiedler contour marks the slowest direction of internal mixing.
 That is where the graph would split if you forced a two-way cut.
 ```
 
-Avoid (these belong to a later phase):
+```text
+High slack → small drops scattered widely → tokens reach the whole
+grid → one connected cluster.
+Low slack → big bursts dumped at one place → most of the grid decays
+into dormancy → the active component fragments.
+```
+
+Avoid (Phase 3 vocabulary; deferred until the AM-GM layer is back):
 
 ```text
 This is an AM-GM block.
 This proves the boundary is real.
 This is a scalar interface.
+Boundary integrity compromised.
 ```
 
 ## Tooltip text
 
-### Share rate `α`
+### Slack
 
-How aggressively each alive cell averages its resource with its alive neighbours. Higher share rates produce faster equilibration within a connected region.
+Drop magnitude knob. `M_drop = round(15 / slack)`. High slack → small drops → tokens scattered across many cells → one big cluster. Low slack → big drops → tokens concentrated → grid fragments.
 
-### Food discovery rate `p_food`
+### Share rate α
 
-The per-cell, per-tick probability of receiving a resource pulse from a forager event. The only source of new resource in the system.
+How aggressively each alive cell averages its resource with its alive neighbours. Higher α → faster equilibration within a connected region. Each edge fires with probability `α · κ_ij · g(r_i) · g(r_j)` per tick.
 
-### Discovery size `ε`
+### Decay μ
 
-The magnitude of each forager pulse. Larger pulses lift more cells above the birth threshold but also more above the death threshold.
-
-### Death threshold `r_death`
-
-Alive cells with resource below this threshold start dying. The death probability scales with how depleted the cell is.
-
-### Death steepness `β`
-
-The maximum per-(death-tick) probability of dying, achieved when a cell has zero resource.
-
-### Birth threshold `r_birth`
-
-A neighbour counts as "healthy" only if its resource is above this threshold. Empty cells need at least *k* healthy neighbours to be eligible for birth.
-
-### Birth rate `γ`
-
-The per-empty-cell, per-(birth-tick) probability of being born, given that at least *k* healthy neighbours are present.
-
-### Healthy neighbours k
-
-The minimum number of healthy neighbours required for an empty cell to be a birth candidate.
+Per-tick, per-token probability of evaporating into the reservoir. Higher μ → faster turnover, smaller steady-state token count in cells.
 
 ### Speed
 
-Ticks per second. Lower speeds make the four-phase rule easier to read; higher speeds let the spectral plot settle faster.
+Phase-steps per wall-clock second. Each tick has three phases (SHARE, DECAY, DROP), so 18 steps/s ≈ 6 ticks/s. Use lower speed to read individual phases; higher to settle the convergence plot quickly.
 
-### Random density
+### Vitality r₀
 
-Probability that each cell is initially alive when the Random Scatter preset is reseeded.
+Token count at which a cell is half-engaged (sigmoid centre). Cells with `r ≥ r₀` are mostly active; cells with `r ≤ r₀` are mostly dormant.
+
+### Vitality k
+
+Steepness of the vitality sigmoid in token units. Larger k → sharper on/off behaviour around r₀.
+
+### Active threshold
+
+Minimum vitality `g(r)` for a cell to count as "active" in the spectral diagnostics. Below threshold, the cell is invisible to the Laplacian and Fiedler computation.
+
+### Grid size N
+
+Side length of the square grid. Larger → richer cluster shapes but heavier compute. Takes effect on next Reset / preset change.
+
+### Avg tokens / cell
+
+Average tokens per cell at initialisation. Total energy = `round(this × N²)`. Takes effect on next Reset / preset change.
+
+### Spectral cadence
+
+Number of share-ticks between recomputes of λ₂ and φ₂. Smaller = more responsive Fiedler overlay; larger = cheaper.
+
+### Fit window
+
+Number of recent samples used to fit the convergence-plot slope. Must be smaller than the typical interval between drop events for the fit to ever land.
+
+### Plot window
+
+Maximum number of samples drawn on the convergence plot.
 
 ## Diagnostic copy
 
-### Spectral gap (Laplacian)
+### λ₂ (Laplacian)
 
-The second-smallest eigenvalue `λ_2` of the symmetric graph Laplacian on the largest connected alive component. Equal to the inverse of the equilibration timescale for resource sharing on that component.
+Second-smallest eigenvalue of the vitality-weighted Laplacian on the largest connected active component. Equal to the inverse of the equilibration timescale for token-sharing on that component.
 
-### Spectral gap (fitted)
+### gap (fitted)
 
-The slope of the convergence plot, divided by `−α`. After a transient and between birth/death events, this matches the Laplacian gap.
+Slope of the convergence plot, corrected for per-tick decay: `(−slope − μ) / α`. After a transient and between drop events, this matches the Laplacian gap.
 
-### Convergence plot
+### disagreement %
 
-`log ‖r⟂(t)‖` versus time, where `r⟂` is the part of the current resource vector orthogonal to the constant mode on the largest connected component. After an initial transient, the plot is a straight line whose slope is `−α · λ_2`.
+`|gap_fit − λ₂| / λ₂`. Small (< 10 %) when the system is in the linear regime and the fit window is clean.
 
-### Component count
+### components
 
-Number of connected components in the alive subgraph. When this is greater than 1, the reported gap refers to the largest component only; the rest of the graph is decoupled from it through the share step.
+Number of connected components in the active subgraph. When this is greater than 1, the reported gap refers to the largest component only; the rest of the graph is decoupled from it through the SHARE step. The "split" badge appears at 2+ as a visual cue.
 
-### Fiedler tint and contour
+### fit R²
 
-Each alive cell is tinted by the sign of the second-smallest Laplacian eigenvector `φ_2`. The contour marks edges where neighbouring cells disagree on the sign of `φ_2`. This is the slowest direction of internal mixing — the soft boundary along which resources flow most reluctantly.
+Coefficient of determination for the slope fit. Close to 1 → strong linear regime; lower → noisy or out of the slow-mode regime.
+
+### total / reservoir / M_drop / τ_drop / active cells
+
+Energy budget. Total is invariant by construction. Reservoir is what's queued for future drops. M_drop and τ_drop are the magnitude and expected frequency of drops at steady state. Active cells is the count above vitality threshold.
 
 ## Phase strip labels
 
 ```text
-SHARE     · every tick · cells average their resource with alive neighbours
-DISCOVER  · every tick · foragers may drop a resource pulse
-CULL      · slow cadence · depleted cells may die
-BIRTH     · slow cadence · empty cells with healthy neighbours may be born
+SHARE     stochastic per-edge token transfer
+DECAY     Binomial(r_i, μ) per cell, tokens to reservoir
+DROP      dispense M tokens at the DropSource's chosen site
 ```
 
-Highlight the currently firing phase. CULL and BIRTH fire on a slower cadence (controlled by `T_db`); during the in-between share ticks, the strip shows SHARE / DISCOVER lit and CULL / BIRTH dim.
+The currently firing phase is highlighted in accent colour each step.
+
+## DropSource descriptions (in preset cards)
+
+```text
+Uniform Drops
+  Drops at iid uniform random cells. No spatial or temporal
+  correlation — the null hypothesis. With uniform κ, no cluster
+  should form: tokens stay broadly distributed.
+
+Twin Springs
+  Drops alternate strictly between two fixed cells. Two competing
+  clusters: when slack is small they merge into one connected
+  medium; when slack is large they stay as separate hot spots with
+  the rest of the grid dormant.
+
+Wandering Source
+  Drop site does a random walk on the grid (p_stay = 0.5). A single
+  cluster forms and follows the drifting source. Watch the Fiedler
+  contour migrate with it.
+```
+
+## Perf HUD copy
+
+```text
+60 fps · 18/18 steps/s · ok
+60 fps · 11/18 steps/s · lagging
+```
+
+The HUD shows the previous second's average. "lagging" appears when actual is below 85 % of target.
+
+## App footer
+
+```text
+Σ r + reservoir = total energy is invariant by construction.
+Drops are the only randomness in DROP; SHARE and DECAY are
+stochastic at the per-edge / per-token level. Cascade speed
+matches α · λ₂ of the current weighted Laplacian.
+```
