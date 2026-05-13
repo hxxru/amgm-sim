@@ -70,6 +70,60 @@ export function components(
   return comps;
 }
 
+// Build a sparse Laplacian *matvec* closure: returns a function that
+// applies L_w · x to any vector x of length indices.length. Cheap for
+// large grids; never materializes the dense matrix.
+export function makeLaplacianMatvec(
+  indices: number[],
+  coupling: CouplingMap,
+  vitalities: number[],
+): (x: number[]) => number[] {
+  const W = coupling.W;
+  const N = indices.length;
+  const local = new Map<number, number>();
+  for (let i = 0; i < N; i++) local.set(indices[i], i);
+
+  // Pre-extract the neighbour list with effective weights.
+  const neighbours: { j: number; w: number }[][] = Array.from(
+    { length: N },
+    () => [],
+  );
+  const diag = new Array(N).fill(0);
+  for (let i = 0; i < N; i++) {
+    const idx = indices[i];
+    const cy = Math.floor(idx / W);
+    const cx = idx - cy * W;
+    const gi = vitalities[idx];
+    const consider = (nx: number, ny: number, kappa: number) => {
+      if (kappa <= 0) return;
+      const ni = ny * W + nx;
+      const j = local.get(ni);
+      if (j === undefined) return;
+      const gj = vitalities[ni];
+      const w = kappa * gi * gj;
+      if (w <= 0) return;
+      neighbours[i].push({ j, w });
+      diag[i] += w;
+    };
+    if (cx + 1 < coupling.W) consider(cx + 1, cy, coupling.kappaH[cy][cx]);
+    if (cx - 1 >= 0) consider(cx - 1, cy, coupling.kappaH[cy][cx - 1]);
+    if (cy + 1 < coupling.H) consider(cx, cy + 1, coupling.kappaV[cy][cx]);
+    if (cy - 1 >= 0) consider(cx, cy - 1, coupling.kappaV[cy - 1][cx]);
+  }
+
+  return (x: number[]) => {
+    const y = new Array(N).fill(0);
+    for (let i = 0; i < N; i++) {
+      let s = diag[i] * x[i];
+      for (const { j, w } of neighbours[i]) {
+        s -= w * x[j];
+      }
+      y[i] = s;
+    }
+    return y;
+  };
+}
+
 // Build the symmetric weighted graph Laplacian L_w = D_w − A_w on a list
 // of active-cell indices. Edge weight = κ_ij · g(r_i) · g(r_j), so the
 // returned gap matches the share-step contraction rate (divided by α).

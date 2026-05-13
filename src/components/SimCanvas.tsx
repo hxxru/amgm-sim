@@ -25,7 +25,7 @@ interface Props {
   showPhaseStrip: boolean;
 }
 
-const CELL = 22;
+const CELL = 16;
 const STRIP_H = 26;
 const PAD = 6;
 
@@ -91,15 +91,10 @@ export function SimCanvas({
     ctx.fillStyle = "#0a0c10";
     ctx.fillRect(0, 0, cssW, cssH);
 
-    // Determine the colour range. We normalize to a moving max so that
-    // the visual differences stay fine-grained even as average r changes.
-    let maxR = rMaxHint;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (grid[y][x].r > maxR) maxR = grid[y][x].r;
-      }
-    }
-    if (maxR < 1e-6) maxR = 1e-6;
+    // Integer r ∈ [0, 15]. Normalise against the fixed level count so
+    // each token level maps to a stable viridis band regardless of the
+    // current grid state.
+    const maxR = Math.max(15, rMaxHint);
 
     const px = (x: number) => PAD + x * CELL + CELL / 2;
     const py = (y: number) => PAD + y * CELL + CELL / 2;

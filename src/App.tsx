@@ -3,8 +3,10 @@ import { SimCanvas } from "./components/SimCanvas";
 import { ConvergencePlot } from "./components/ConvergencePlot";
 import { SpectralPanel } from "./components/SpectralPanel";
 import { SimControls } from "./components/SimControls";
+import { PerfHUD } from "./components/PerfHUD";
 import { makeRng, Rng } from "./sim/rng";
 import {
+  fiedlerLanczos,
   fitSlope,
   jacobiEigen,
   orthLogNorm,
@@ -14,6 +16,7 @@ import {
   activeMask,
   buildWeightedLaplacian,
   components,
+  makeLaplacianMatvec,
 } from "./sim/graph";
 import { step } from "./sim/rules";
 import {
@@ -31,8 +34,9 @@ import {
   zeros2D,
 } from "./sim/state";
 
-const H = 20;
-const W = 20;
+const H = 30;
+const W = 30;
+const JACOBI_MAX_N = 150; // beyond this, use Lanczos
 
 function makeInitial(
   preset: Preset,
@@ -103,15 +107,28 @@ function recomputeSpectral(state: SimState, params: Params): SpectralSnapshot | 
       );
     }
   }
-  const L = buildWeightedLaplacian(largest, state.coupling, vits);
-  const eig = jacobiEigen(L);
-  if (eig.values.length < 2) return null;
-  const phi2 = eig.vectors.map((row) => row[1]);
+
+  // Use Jacobi for small subgraphs; Lanczos for large.
+  let lambda2: number;
+  let phi2: number[];
+  if (largest.length <= JACOBI_MAX_N) {
+    const L = buildWeightedLaplacian(largest, state.coupling, vits);
+    const eig = jacobiEigen(L);
+    if (eig.values.length < 2) return null;
+    lambda2 = eig.values[1];
+    phi2 = eig.vectors.map((row) => row[1]);
+  } else {
+    const matvec = makeLaplacianMatvec(largest, state.coupling, vits);
+    const result = fiedlerLanczos(largest.length, matvec, 40);
+    if (!result) return null;
+    lambda2 = result.lambda2;
+    phi2 = result.phi2;
+  }
   return {
     computedAtTick: state.tick,
     activeIndices: largest,
     phi2,
-    lambda2: eig.values[1],
+    lambda2,
     componentCount: comps.length,
   };
 }
@@ -197,6 +214,10 @@ export function App() {
   const [showEdges, setShowEdges] = useState(true);
   const [showPhaseStrip, setShowPhaseStrip] = useState(true);
 
+  // Performance metrics. Computed once per second over a rolling window.
+  const [perf, setPerf] = useState({ fps: 0, stepsPerSec: 0 });
+  const perfRef = useRef({ frames: 0, steps: 0, windowStart: 0 });
+
   const paramsRef = useRef(params);
   paramsRef.current = params;
   const simStateRef = useRef(simState);
@@ -245,13 +266,14 @@ export function App() {
     let raf = 0;
     let last = performance.now();
     let accum = 0;
+    perfRef.current = { frames: 0, steps: 0, windowStart: performance.now() };
     const loop = (now: number) => {
       const dt = now - last;
       last = now;
       accum += dt;
       const stepMs = 1000 / Math.max(1, paramsRef.current.speed);
       let n = 0;
-      const maxStepsPerFrame = 60;
+      const maxStepsPerFrame = 90;
       while (accum >= stepMs && n < maxStepsPerFrame) {
         accum -= stepMs;
         const cur = simStateRef.current;
@@ -264,6 +286,18 @@ export function App() {
         n++;
       }
       if (n > 0) setSimState(simStateRef.current);
+
+      // Perf bookkeeping: roll up once per second.
+      perfRef.current.frames += 1;
+      perfRef.current.steps += n;
+      const elapsed = now - perfRef.current.windowStart;
+      if (elapsed >= 1000) {
+        const fps = (perfRef.current.frames * 1000) / elapsed;
+        const stepsPerSec = (perfRef.current.steps * 1000) / elapsed;
+        setPerf({ fps, stepsPerSec });
+        perfRef.current = { frames: 0, steps: 0, windowStart: now };
+      }
+
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -277,7 +311,6 @@ export function App() {
 
   const rMaxHint = maxR(simState);
   const activeCount = activeCellCount(simState, params);
-  const epsilonDrop = simState.totalEnergy / Math.max(params.slack, 1e-6);
 
   return (
     <div className="app">
@@ -330,10 +363,15 @@ export function App() {
           />
           <p className="tick-readout">
             tick {simState.tick} · next: {simState.nextPhase} · reservoir{" "}
-            {simState.reservoir.toFixed(2)} · ε_drop{" "}
-            {epsilonDrop.toFixed(2)} · active {activeCount}/
-            {simState.H * simState.W}
+            {simState.reservoir} · M_drop{" "}
+            {Math.max(1, Math.min(15, Math.round(15 / Math.max(params.slack, 1e-6))))} ·
+            active {activeCount}/{simState.H * simState.W}
           </p>
+          <PerfHUD
+            fps={perf.fps}
+            actualStepsPerSec={perf.stepsPerSec}
+            targetStepsPerSec={params.speed}
+          />
         </section>
         <aside className="pane pane-diagnostics">
           <SpectralPanel

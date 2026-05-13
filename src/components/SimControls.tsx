@@ -39,12 +39,12 @@ interface SliderRow {
 const BASIC: SliderRow[] = [
   {
     key: "slack",
-    label: "Slack  τ_haz / τ_drop",
-    min: -1,
-    max: 2,
+    label: "Slack",
+    min: -0.4,
+    max: 1.4,
     step: 0.05,
     tooltip:
-      "Ratio of decay timescale to drop interval. High slack → frequent small drops → energy reaches everywhere → large stable clusters. Low slack → rare big drops → fragmented landscape between bursts.",
+      "Drop magnitude knob. M_drop = round(15 / slack). High slack → small drops → tokens scattered across many cells → one big cluster. Low slack → big drops → tokens concentrated → grid fragments.",
     log: true,
   },
   {
@@ -69,28 +69,31 @@ const BASIC: SliderRow[] = [
     key: "speed",
     label: "Speed (steps/s)",
     min: 1,
-    max: 240,
+    max: 180,
     step: 1,
-    tooltip: "Phase-steps per wall-clock second.",
+    tooltip:
+      "Phase-steps per wall-clock second. 3 phases per tick — so e.g. 18 steps/s = 6 ticks/s.",
   },
 ];
 
 const ADVANCED: SliderRow[] = [
   {
     key: "vitalityR0",
-    label: "Vitality r₀",
-    min: 0.01,
-    max: 1,
-    step: 0.01,
-    tooltip: "Resource level at which a cell is half-engaged (sigmoid centre).",
+    label: "Vitality r₀ (tokens)",
+    min: 0.5,
+    max: 12,
+    step: 0.25,
+    tooltip:
+      "Token count at which a cell is half-engaged (sigmoid centre). r ≥ r₀ → mostly active.",
   },
   {
     key: "vitalityK",
     label: "Vitality k",
-    min: 1,
-    max: 60,
-    step: 1,
-    tooltip: "Steepness of the vitality sigmoid. Higher k → sharper on/off behaviour.",
+    min: 0.2,
+    max: 6,
+    step: 0.1,
+    tooltip:
+      "Steepness of the vitality sigmoid in token units. Larger k → sharper on/off behaviour.",
   },
   {
     key: "vitalityThreshold",
@@ -102,12 +105,12 @@ const ADVANCED: SliderRow[] = [
   },
   {
     key: "totalEnergyTarget",
-    label: "Total energy (resets)",
-    min: 10,
-    max: 400,
-    step: 5,
+    label: "Total tokens (resets)",
+    min: 100,
+    max: 10000,
+    step: 50,
     tooltip:
-      "Conserved energy budget. Σ r + reservoir = this. Only takes effect on the next Reset / preset change.",
+      "Integer token budget. Σ r + reservoir = this, exactly. Only takes effect on the next Reset / preset change.",
   },
   {
     key: "recomputeSpectralEvery",

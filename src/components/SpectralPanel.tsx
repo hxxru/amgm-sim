@@ -32,8 +32,9 @@ export function SpectralPanel({
   const fittedGap = fit ? (-fit.slope - mu) / Math.max(alpha, 1e-9) : null;
   const lambda2 = spectral?.lambda2 ?? null;
   const componentCount = spectral?.componentCount ?? null;
-  const epsilonDrop = totalEnergy / Math.max(slack, 1e-6);
-  const dropPeriod = totalEnergy > 0 ? epsilonDrop / (mu * Math.max(totalEnergy - reservoir, 1e-6)) : 0;
+  const mDrop = Math.max(1, Math.min(15, Math.round(15 / Math.max(slack, 1e-6))));
+  const expectedTokensPerTick = mu * Math.max(totalEnergy - reservoir, 1);
+  const dropPeriod = mDrop / Math.max(expectedTokensPerTick, 1e-6);
 
   let agreement = "—";
   if (fittedGap != null && lambda2 != null && lambda2 > 1e-6) {
@@ -80,25 +81,25 @@ export function SpectralPanel({
         </tbody>
       </table>
 
-      <h3>Energy budget</h3>
+      <h3>Energy budget (tokens)</h3>
       <table className="spectral-table">
         <tbody>
           <tr>
-            <th title="Conserved: Σ r + reservoir.">total</th>
-            <td>{fmt(totalEnergy, 2)}</td>
+            <th title="Conserved integer: Σ r + reservoir.">total</th>
+            <td>{totalEnergy}</td>
           </tr>
           <tr>
-            <th title="Mass currently in the atmosphere, waiting to be dropped.">
-              reservoir
+            <th title="Tokens currently in the atmosphere.">reservoir</th>
+            <td>{reservoir}</td>
+          </tr>
+          <tr>
+            <th title="Tokens dispensed per drop event. M = round(15 / slack).">
+              M_drop
             </th>
-            <td>{fmt(reservoir, 2)}</td>
+            <td>{mDrop}</td>
           </tr>
           <tr>
-            <th title="Drop threshold = total / slack.">ε_drop</th>
-            <td>{fmt(epsilonDrop, 2)}</td>
-          </tr>
-          <tr>
-            <th title="Expected number of ticks between drops at steady state.">
+            <th title="Expected ticks between drop events at steady state.">
               τ_drop (≈ ticks)
             </th>
             <td>{Number.isFinite(dropPeriod) ? fmt(dropPeriod, 1) : "—"}</td>

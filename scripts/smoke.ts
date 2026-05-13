@@ -14,16 +14,18 @@ import {
   activeMask,
   buildWeightedLaplacian,
   components,
+  makeLaplacianMatvec,
 } from "../src/sim/graph.ts";
 import {
+  fiedlerLanczos,
   fitSlope,
   jacobiEigen,
   orthLogNorm,
 } from "../src/sim/spectral.ts";
 import { OrthSample, SimState, vitality, zeros2D } from "../src/sim/state.ts";
 
-const H = 20;
-const W = 20;
+const H = 30;
+const W = 30;
 
 for (const preset of PRESETS) {
   // Use a very-high slack so drops effectively never fire — the run
@@ -39,12 +41,7 @@ for (const preset of PRESETS) {
   const rng = makeRng(42);
   const { grid, coupling } = preset.makeInitial(H, W, rng, params);
 
-  // Add some initial heterogeneity so r⟂ ≠ 0 even from a uniform seed.
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      grid[y][x].r += 0.05 * (rng() - 0.5);
-    }
-  }
+  // Compute the actual integer total after preset init.
   let total = 0;
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) total += grid[y][x].r;
@@ -68,7 +65,8 @@ for (const preset of PRESETS) {
   };
 
   const samples: OrthSample[] = [];
-  for (let i = 0; i < 6000; i++) {
+  const t0 = Date.now();
+  for (let i = 0; i < 2000; i++) {
     state = step(state, params, rng);
     if (state.lastPhase === "SHARE") {
       const mask = activeMask(
@@ -89,9 +87,10 @@ for (const preset of PRESETS) {
         logNorm: orthLogNorm(rs),
         sinceEvent: state.ticksSinceDrop,
       });
-      if (samples.length > 200) break;
+      if (samples.length >= 80) break;
     }
   }
+  const tElapsed = Date.now() - t0;
 
   const finalTotal = state.reservoir + state.grid.flat().reduce((s, c) => s + c.r, 0);
   const consErr = Math.abs(finalTotal - total);
@@ -114,9 +113,16 @@ for (const preset of PRESETS) {
       );
     }
   }
-  const L = buildWeightedLaplacian(largest, state.coupling, vits);
-  const eig = jacobiEigen(L);
-  const lambda2 = eig.values[1] ?? 0;
+  let lambda2: number;
+  if (largest.length <= 150) {
+    const L = buildWeightedLaplacian(largest, state.coupling, vits);
+    const eig = jacobiEigen(L);
+    lambda2 = eig.values[1] ?? 0;
+  } else {
+    const matvec = makeLaplacianMatvec(largest, state.coupling, vits);
+    const result = fiedlerLanczos(largest.length, matvec, 40);
+    lambda2 = result?.lambda2 ?? 0;
+  }
   const fit = fitSlope(samples, params.fitWindow);
   const fittedGap = fit
     ? (-fit.slope - params.mu) / Math.max(params.alpha, 1e-9)
@@ -131,7 +137,7 @@ for (const preset of PRESETS) {
     ok = disagreement < 0.05 ? "OK" : `LARGE (${(disagreement * 100).toFixed(1)}%)`;
   }
 
-  console.log(`\n=== ${preset.name} === [${ok}]`);
+  console.log(`\n=== ${preset.name} === [${ok}]  (sim ${tElapsed}ms)`);
   console.log(`  active cells   : ${largest.length} of ${comps.length} components`);
   console.log(`  conservation Δ : ${consErr.toExponential(2)}`);
   console.log(`  λ₂ (Laplacian) : ${lambda2.toFixed(4)}`);

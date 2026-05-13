@@ -21,35 +21,72 @@ export interface Preset {
 }
 
 export const DEFAULT_PARAMS: Params = {
-  slack: 10,
+  // 6 ticks/s = 18 steps/s (3 phases per tick).
+  speed: 18,
+  // Slack 3 → M = round(15/3) = 5 tokens per drop.
+  slack: 3,
   alpha: 0.18,
-  vitalityR0: 0.15,
-  vitalityK: 18,
+  // Vitality sigmoid in token units: g(0)=0.011, g(2)=0.18, g(3)=0.5,
+  // g(4)=0.82, g(R_MAX)≈1. Cells become "engaged" at r ≥ 3.
+  vitalityR0: 3,
+  vitalityK: 1.5,
+  vitalityThreshold: 0.2,
   mu: 0.02,
   dropBiasDormant: false,
-  speed: 60,
-  vitalityThreshold: 0.15,
   recomputeSpectralEvery: 8,
-  fitWindow: 15,
+  fitWindow: 25,
   plotWindow: 240,
-  totalEnergyTarget: 80, // ~0.2 × cell count if uniformly distributed
+  // ~4 tokens per cell on a 30×30 grid.
+  totalEnergyTarget: 3600,
 };
 
-// Distribute the target total energy uniformly across all cells.
+// Distribute the target total energy uniformly (integer-rounded) across
+// all cells. Any rounding remainder is dropped into the first cells.
 function seedUniform(H: number, W: number, total: number): Grid {
   const grid = makeEmptyGrid(H, W);
-  const per = total / (H * W);
+  const N = H * W;
+  const base = Math.floor(total / N);
+  let extra = total - base * N;
   for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) grid[y][x].r = per;
+    for (let x = 0; x < W; x++) {
+      let v = base;
+      if (extra > 0) {
+        v += 1;
+        extra -= 1;
+      }
+      grid[y][x].r = Math.min(v, 15);
+    }
   }
   return grid;
 }
 
-// Concentrate the target total at one (or a few) seed cells.
-function seedAt(H: number, W: number, total: number, seeds: [number, number][]): Grid {
+// Concentrate the target total at one (or a few) seed cells, but never
+// exceed R_MAX per cell — overflow spills to neighbouring seeds.
+function seedAt(
+  H: number,
+  W: number,
+  total: number,
+  seeds: [number, number][],
+): Grid {
   const grid = makeEmptyGrid(H, W);
-  const per = total / seeds.length;
-  for (const [x, y] of seeds) grid[y][x].r = per;
+  let remaining = total;
+  for (const [x, y] of seeds) {
+    const take = Math.min(remaining, 15);
+    grid[y][x].r = take;
+    remaining -= take;
+  }
+  // Any remaining tokens get sprinkled around seed[0] to keep the picture
+  // local. If still more, fall back to uniform.
+  let idx = 0;
+  while (remaining > 0 && idx < H * W) {
+    const y = Math.floor(idx / W);
+    const x = idx - y * W;
+    if (grid[y][x].r < 15) {
+      grid[y][x].r += 1;
+      remaining -= 1;
+    }
+    idx++;
+  }
   return grid;
 }
 

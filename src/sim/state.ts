@@ -1,15 +1,16 @@
-// Core state types for the continuous-coupling slime-mold CA.
+// Token-quantised slime-mold CA.
 //
-// The previous model carried a binary `alive` flag per cell and discrete
-// CULL/BIRTH events. This model replaces both with one continuous state
-// per cell (`r`) and a vitality function `g(r)` that smoothly modulates
-// each cell's coupling to its neighbours. Birth and death are emergent:
-// a dormant cell with healthy neighbours has resource pulled in by the
-// share rule until its vitality crosses threshold; a starved cell loses
-// vitality and decouples.
+// Each cell holds an integer token count r ∈ {0, ..., L-1}. Conservation
+// is exact: Σ r_i + reservoir = totalEnergy (all integers). SHARE
+// transfers single tokens stochastically across edges; DECAY moves
+// individual tokens to a reservoir; DROP pours the reservoir back at
+// random sites.
+
+export const LEVELS = 16;
+export const R_MAX = LEVELS - 1;
 
 export interface Cell {
-  r: number;
+  r: number; // integer in [0, R_MAX]
 }
 
 export type Grid = Cell[][];
@@ -51,33 +52,34 @@ export interface DropFlash {
 }
 
 export interface Params {
-  // Headline: the τ_drop/τ_haz "slack" knob.  High slack → frequent small
-  // drops → energy reaches everywhere → large clusters survive.  Low slack
-  // → rare big drops → fragmented dormant landscape between bursts.
-  // Internally: ε_drop = totalEnergy / slack.
+  // Headline knob. High slack → small drop magnitude → tokens dispersed
+  // → most cells stay above vitality threshold → one connected cluster.
+  // Low slack → large drop magnitude → tokens concentrated → rest of
+  // grid decays below threshold → fragmentation.
+  // Internally: M_drop = round((R_MAX) / slack), clamped to [1, R_MAX].
   slack: number;
 
   // Sharing
-  alpha: number;        // base share rate
-  vitalityR0: number;   // sigmoid centre
+  alpha: number;        // base SHARE probability scale per edge per tick
+  vitalityR0: number;   // sigmoid centre, in r-units
   vitalityK: number;    // sigmoid steepness
 
   // Hazard
-  mu: number;           // per-tick fractional decay to the reservoir
+  mu: number;           // per-tick per-token probability of decay
 
   // Drop biasing
-  dropBiasDormant: boolean; // if true, weight drop site selection by (1 − g)
+  dropBiasDormant: boolean; // if true, weight drop sites by (1 − g)
 
   // Run
   speed: number;        // steps per second (UI)
 
   // Spectral
-  vitalityThreshold: number;     // g threshold for "active" cells in spectral
+  vitalityThreshold: number;     // g threshold for "active" cells
   recomputeSpectralEvery: number;
   fitWindow: number;
   plotWindow: number;
 
-  // Initialisation (when reseeding the preset)
+  // Initialisation (when reseeding the preset). Integer; reset on Reset.
   totalEnergyTarget: number;
 }
 
