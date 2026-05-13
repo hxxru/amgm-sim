@@ -112,6 +112,58 @@ function wanderingSourcePreset(
   };
 }
 
+function foragingPreset(H: number, W: number, _rng: Rng, params: Params) {
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
+  return {
+    grid,
+    coupling: uniformCoupling(H, W, 1.0),
+    dropSource: {
+      kind: "forage" as const,
+      sampleSize: 6,
+    },
+    reservoir,
+  };
+}
+
+function regimeMarkovPreset(H: number, W: number, _rng: Rng, params: Params) {
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
+  // Three regimes — corners of an equilateral triangle, each with a tight
+  // spatial spread. Long dwell time (~200 drops between switches at
+  // pSwitch = 0.005) so a cluster forms in one regime before flipping.
+  const states = [
+    { centerX: Math.floor(W * 0.25), centerY: Math.floor(H * 0.3), sigma: 2.5 },
+    { centerX: Math.floor(W * 0.75), centerY: Math.floor(H * 0.3), sigma: 2.5 },
+    { centerX: Math.floor(W * 0.5),  centerY: Math.floor(H * 0.75), sigma: 2.5 },
+  ];
+  return {
+    grid,
+    coupling: uniformCoupling(H, W, 1.0),
+    dropSource: {
+      kind: "markov" as const,
+      states,
+      currentState: 0,
+      pSwitch: 0.005,
+    },
+    reservoir,
+  };
+}
+
+function hawkesPreset(H: number, W: number, _rng: Rng, params: Params) {
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
+  return {
+    grid,
+    coupling: uniformCoupling(H, W, 1.0),
+    dropSource: {
+      kind: "hawkes" as const,
+      lastX: Math.floor(W / 2),
+      lastY: Math.floor(H / 2),
+      localityRadius: 2.5,
+      resetProb: 0.03,
+    },
+    reservoir,
+  };
+}
+
 export const PRESETS: Preset[] = [
   {
     id: "uniform-drops",
@@ -135,6 +187,30 @@ export const PRESETS: Preset[] = [
     description:
       "Drop site does a random walk on the grid (p_stay = 0.5). A single cluster forms and follows the drifting source. Watch the Fiedler contour migrate with it.",
     makeInitial: wanderingSourcePreset,
+    params: {},
+  },
+  {
+    id: "foraging",
+    name: "Foraging",
+    description:
+      "State-coupled: each drop samples a handful of cells and lands at the dimmest. The cluster migrates as a feeding front — bright regions get starved as drops avoid them; dim regions get fed.",
+    makeInitial: foragingPreset,
+    params: {},
+  },
+  {
+    id: "regime-markov",
+    name: "Regime Markov",
+    description:
+      "Hidden three-state Markov chain over Gaussian drop regions, pSwitch = 0.005. The cluster lives in one region for a long stretch, then teleports to another — the Fiedler cut reorients each switch.",
+    makeInitial: regimeMarkovPreset,
+    params: {},
+  },
+  {
+    id: "hawkes",
+    name: "Hawkes Cluster",
+    description:
+      "Spatial self-excitation: each drop biases the next toward its own neighbourhood. Clusters grow runaway around the chain's current location, with occasional resets (resetProb = 0.03) to a fresh iid site.",
+    makeInitial: hawkesPreset,
     params: {},
   },
 ];

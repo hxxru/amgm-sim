@@ -145,7 +145,14 @@ function applyDrop(
   const H = grid.length;
   const W = grid[0].length;
   const next = cloneGrid(grid);
-  const { site, source: newSource } = nextDropSite(dropSource, rng, H, W);
+  const { site, source: newSource } = nextDropSite(
+    dropSource,
+    rng,
+    H,
+    W,
+    grid,
+    { r0: params.vitalityR0, k: params.vitalityK },
+  );
   const primaryX = site.x;
   const primaryY = site.y;
 
