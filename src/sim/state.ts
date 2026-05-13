@@ -78,8 +78,9 @@ export interface Params {
   fitWindow: number;
   plotWindow: number;
 
-  // Initialisation (when reseeding the preset). Integer; reset on Reset.
-  totalEnergyTarget: number;
+  // Initialisation (only consumed on Reset / preset change).
+  gridSize: number;             // square grid; H = W = gridSize
+  tokensPerCellTarget: number;  // average tokens per cell at init
 }
 
 export interface SimState {

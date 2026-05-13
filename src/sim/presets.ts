@@ -44,8 +44,8 @@ export const DEFAULT_PARAMS: Params = {
   recomputeSpectralEvery: 8,
   fitWindow: 25,
   plotWindow: 240,
-  // ~4 tokens per cell on a 30×30 grid.
-  totalEnergyTarget: 3600,
+  gridSize: 50,
+  tokensPerCellTarget: 4,
 };
 
 // Distribute the integer token budget uniformly across all cells; any
@@ -62,8 +62,12 @@ function seedUniformGrid(H: number, W: number, total: number): { grid: Grid; res
   return { grid, reservoir: Math.max(0, total - placed) };
 }
 
+function totalTokensFor(H: number, W: number, params: Params): number {
+  return Math.max(0, Math.round(params.tokensPerCellTarget * H * W));
+}
+
 function uniformDropPreset(H: number, W: number, _rng: Rng, params: Params) {
-  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
   return {
     grid,
     coupling: uniformCoupling(H, W, 1.0),
@@ -73,7 +77,7 @@ function uniformDropPreset(H: number, W: number, _rng: Rng, params: Params) {
 }
 
 function twinSpringsPreset(H: number, W: number, _rng: Rng, params: Params) {
-  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
   const left = { x: Math.floor(W * 0.25), y: Math.floor(H / 2) };
   const right = { x: Math.floor(W * 0.75), y: Math.floor(H / 2) };
   return {
@@ -94,7 +98,7 @@ function wanderingSourcePreset(
   _rng: Rng,
   params: Params,
 ) {
-  const { grid, reservoir } = seedUniformGrid(H, W, params.totalEnergyTarget);
+  const { grid, reservoir } = seedUniformGrid(H, W, totalTokensFor(H, W, params));
   return {
     grid,
     coupling: uniformCoupling(H, W, 1.0),

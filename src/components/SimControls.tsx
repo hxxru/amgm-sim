@@ -104,13 +104,22 @@ const ADVANCED: SliderRow[] = [
     tooltip: "g(r) above this counts as an 'active' cell for the spectral diagnostics.",
   },
   {
-    key: "totalEnergyTarget",
-    label: "Total tokens (resets)",
-    min: 100,
-    max: 10000,
-    step: 50,
+    key: "gridSize",
+    label: "Grid size N×N (resets)",
+    min: 12,
+    max: 80,
+    step: 1,
     tooltip:
-      "Integer token budget. Σ r + reservoir = this, exactly. Only takes effect on the next Reset / preset change.",
+      "Side length of the square grid. Larger → richer cluster shapes and finer detail, but heavier spectral compute. Takes effect on next Reset / preset change.",
+  },
+  {
+    key: "tokensPerCellTarget",
+    label: "Avg tokens / cell (resets)",
+    min: 1,
+    max: 12,
+    step: 0.5,
+    tooltip:
+      "Average tokens per cell at init. Σ r + reservoir = round(this × N²), exactly conserved. Takes effect on next Reset / preset change.",
   },
   {
     key: "recomputeSpectralEvery",

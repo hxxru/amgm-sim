@@ -25,9 +25,16 @@ interface Props {
   showPhaseStrip: boolean;
 }
 
-const CELL = 16;
+const TARGET_PX = 760;
+const MIN_CELL = 9;
+const MAX_CELL = 28;
 const STRIP_H = 26;
 const PAD = 6;
+
+function cellSize(gridDim: number): number {
+  const px = Math.floor(TARGET_PX / gridDim);
+  return Math.max(MIN_CELL, Math.min(MAX_CELL, px));
+}
 
 // Viridis colormap. Five anchor points; we interpolate between them.
 const VIRIDIS = [
@@ -78,6 +85,7 @@ export function SimCanvas({
     const H = grid.length;
     const W = grid[0].length;
     const stripH = showPhaseStrip ? STRIP_H : 0;
+    const CELL = cellSize(Math.max(H, W));
 
     const cssW = W * CELL + PAD * 2;
     const cssH = H * CELL + PAD * 2 + stripH;

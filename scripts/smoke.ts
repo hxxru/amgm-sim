@@ -24,8 +24,8 @@ import {
 } from "../src/sim/spectral.ts";
 import { OrthSample, SimState, vitality, zeros2D } from "../src/sim/state.ts";
 
-const H = 30;
-const W = 30;
+const H = 50;
+const W = 50;
 
 for (const preset of PRESETS) {
   // Use a very-high slack so drops effectively never fire — the run

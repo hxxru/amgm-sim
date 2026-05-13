@@ -34,8 +34,6 @@ import {
   zeros2D,
 } from "./sim/state";
 
-const H = 30;
-const W = 30;
 const JACOBI_MAX_N = 150; // beyond this, use Lanczos
 
 function makeInitial(
@@ -44,6 +42,9 @@ function makeInitial(
   seed: number,
 ): { state: SimState; rng: Rng } {
   const rng = makeRng(seed);
+  const N = Math.max(4, Math.min(80, Math.floor(params.gridSize)));
+  const H = N;
+  const W = N;
   const { grid, coupling, dropSource, reservoir } = preset.makeInitial(
     H,
     W,
@@ -150,8 +151,8 @@ function postShareHousekeeping(state: SimState, params: Params): SimState {
   const largest = comps[0] ?? [];
   const rs: number[] = [];
   for (const idx of largest) {
-    const y = Math.floor(idx / W);
-    const x = idx - y * W;
+    const y = Math.floor(idx / state.W);
+    const x = idx - y * state.W;
     rs.push(state.grid[y][x].r);
   }
   const logNorm = orthLogNorm(rs);
