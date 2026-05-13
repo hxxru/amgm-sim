@@ -4,86 +4,105 @@
 
 **Gridworld Boundary Diagnostics**
 
-A spatial killed-process sandbox for exploring when candidate blocks behave like scalar AM-GM interfaces, finite-band signatures, or compromised boundaries.
+A four-phase cellular automaton where alive cells share a scarce resource. The simulation runs forward as a clearly readable local rule. Watch the convergence plot collapse to a straight line — its slope is the spectral gap of the current alive subgraph, and the Fiedler-cut contour shows that gap as a soft boundary on the grid.
 
 ## Short intro
 
-This simulation shows a small system with local mixing, killing/failure, and weak bridges between clusters. Move the sliders to see how internal compression, cycle length, and boundary leakage change the diagnostic signature.
+Each tick, four things happen in order: cells share resources with their alive neighbours; foragers stochastically drop new resource; every few ticks, depleted cells may die; and empty cells with healthy neighbours may be born. Move the sliders to change those rates. The convergence plot and the Fiedler overlay both surface the same number — the spectral gap of the alive-cell graph — as the dynamics evolve.
 
-## Suggested-regime copy
+## Pedagogical anchors
 
-Use cautious language:
-
-```text
-Suggested regime: Scalar interface likely
-```
-
-Do not say:
+Preferred copy:
 
 ```text
-This is an individual
+The slope of the convergence plot is the spectral gap of the current alive subgraph.
+Drag the share-rate slider. The slope flattens, the gap drops.
 ```
 
-## Reason templates
+```text
+The Fiedler contour marks the slowest direction of internal mixing.
+That is where the graph would split if you forced a two-way cut.
+```
 
-### Scalar interface likely
+Avoid (these belong to a later phase):
 
-Internal compression is fast relative to the cycle window, and boundary leakage is low.
-
-### Finite-band formal/non-diagnostic
-
-More than one survival mode remains visible, but the retained structure does not align with a clear basin witness.
-
-### Finite-band basin-interpretable
-
-More than one survival mode remains visible, and retained modes appear localized around basin-like regions.
-
-### Cone/vector-valued plural regime
-
-Several retained directions matter and rankings are sensitive to the chosen readout.
-
-### Boundary integrity compromised
-
-Cross-boundary leakage is large relative to the internal compression scale.
-
-### Ambiguous / transition zone
-
-The current parameters lie near a diagnostic boundary. Small changes in tolerance, readout, or cycle length may change the suggested regime.
+```text
+This is an AM-GM block.
+This proves the boundary is real.
+This is a scalar interface.
+```
 
 ## Tooltip text
 
-### Internal mixing
+### Share rate `α`
 
-How quickly probability moves within a cluster. Higher internal mixing usually helps a block compress to a scalar interface value.
+How aggressively each alive cell averages its resource with its alive neighbours. Higher share rates produce faster equilibration within a connected region.
 
-### Bridge coupling
+### Food discovery rate `p_food`
 
-How strongly probability leaks between candidate blocks. Coupling is not automatically fatal, but large leakage can compromise boundary integrity.
+The per-cell, per-tick probability of receiving a resource pulse from a forager event. The only source of new resource in the system.
 
-### Killing intensity
+### Discovery size `ε`
 
-How strongly states are removed by failure or viability loss.
+The magnitude of each forager pulse. Larger pulses lift more cells above the birth threshold but also more above the death threshold.
 
-### Cycle length Δ
+### Death threshold `r_death`
 
-The time window over which the system must internally compress before being evaluated from outside.
+Alive cells with resource below this threshold start dying. The death probability scales with how depleted the cell is.
 
-### Compression strength
+### Death steepness `β`
 
-The spectral gap between the leading survival mode and the next mode, multiplied by the cycle length. Larger values mean stronger scalar compression.
+The maximum per-(death-tick) probability of dying, achieved when a cell has zero resource.
 
-### Scalarity defect
+### Birth threshold `r_birth`
 
-A heuristic measure of how much of the survival profile is missed by a one-mode approximation.
+A neighbour counts as "healthy" only if its resource is above this threshold. Empty cells need at least *k* healthy neighbours to be eligible for birth.
 
-### Retained modes
+### Birth rate `γ`
 
-The number of survival modes still visible on the cycle window.
+The per-empty-cell, per-(birth-tick) probability of being born, given that at least *k* healthy neighbours are present.
 
-### Leakage ratio
+### Healthy neighbours k
 
-A heuristic measure of cross-boundary coupling relative to internal compression.
+The minimum number of healthy neighbours required for an empty cell to be a birth candidate.
 
-### Basin witness
+### Speed
 
-A rough indication of whether retained modes correspond to localized basin-like regions.
+Ticks per second. Lower speeds make the four-phase rule easier to read; higher speeds let the spectral plot settle faster.
+
+### Random density
+
+Probability that each cell is initially alive when the Random Scatter preset is reseeded.
+
+## Diagnostic copy
+
+### Spectral gap (Laplacian)
+
+The second-smallest eigenvalue `λ_2` of the symmetric graph Laplacian on the largest connected alive component. Equal to the inverse of the equilibration timescale for resource sharing on that component.
+
+### Spectral gap (fitted)
+
+The slope of the convergence plot, divided by `−α`. After a transient and between birth/death events, this matches the Laplacian gap.
+
+### Convergence plot
+
+`log ‖r⟂(t)‖` versus time, where `r⟂` is the part of the current resource vector orthogonal to the constant mode on the largest connected component. After an initial transient, the plot is a straight line whose slope is `−α · λ_2`.
+
+### Component count
+
+Number of connected components in the alive subgraph. When this is greater than 1, the reported gap refers to the largest component only; the rest of the graph is decoupled from it through the share step.
+
+### Fiedler tint and contour
+
+Each alive cell is tinted by the sign of the second-smallest Laplacian eigenvector `φ_2`. The contour marks edges where neighbouring cells disagree on the sign of `φ_2`. This is the slowest direction of internal mixing — the soft boundary along which resources flow most reluctantly.
+
+## Phase strip labels
+
+```text
+SHARE     · every tick · cells average their resource with alive neighbours
+DISCOVER  · every tick · foragers may drop a resource pulse
+CULL      · slow cadence · depleted cells may die
+BIRTH     · slow cadence · empty cells with healthy neighbours may be born
+```
+
+Highlight the currently firing phase. CULL and BIRTH fire on a slower cadence (controlled by `T_db`); during the in-between share ticks, the strip shows SHARE / DISCOVER lit and CULL / BIRTH dim.

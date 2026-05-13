@@ -1,83 +1,84 @@
 # Gridworld Boundary Diagnostics
 
-A starter repo for a lightweight web simulation that makes AM-GM interface signatures visually and computationally intuitive.
+A 2D cellular automaton in which alive cells share a scarce resource, are stochastically fed by foragers, and die or birth in proportion to local resource health. The simulation runs forward as a clearly readable local rule. The pedagogical payoff is that the **spectral gap** of the alive-cell graph becomes visible — first as an emergent equilibration timescale, then as a rough boundary painted on the gridworld plane.
 
-The intended app is a single-page interactive gridworld / graph simulation of a finite-state killed Markov process. Users manipulate internal mixing, bridge coupling, killing intensity, barrier height, and cycle length, while simplified AM-GM diagnostics update live.
+This is the **front door** for a longer-term program (the AM-GM Boundary program; see `docs/amgm_context.md`, `docs/amgm_from_scratch.md`). The MVP does not implement AM-GM diagnostics. It earns the right to talk about spectral gaps first.
 
-The project is meant to be a **front-door simulation** for the computational leg of the AM-GM Boundary program, not a full theorem checker or empirical extraction pipeline.
+## What the user sees
 
-## Core idea
+Three synchronized regions:
 
-A visible spatial cluster is not automatically an AM-GM interface. A candidate boundary becomes diagnostically meaningful when internal survival dynamics compress on the relevant cycle window and cross-boundary leakage is small in the relevant spectral / survival-weighted coordinates.
+- **Center (the gridworld):** a 20×20 canvas. Each cell is empty, or alive with a continuous resource level rendered as heat. As the simulation runs, cells share resources with alive neighbors, foragers drop pulses of resource, and birth/death slowly reshape the alive subgraph. Once a Fiedler-cut overlay is enabled, the cells are tinted on either side of a soft contour that marks the slowest direction of internal mixing.
+- **Right (the convergence plot):** a small live chart of `log ‖r⟂(t)‖` versus time — the part of the resource vector orthogonal to the principal mode. After a transient, it traces a straight line whose slope is the spectral gap. The fitted slope is reported alongside the plot.
+- **Left (controls):** preset selector, random-initialization density, sliders for share rate, food discovery rate, death threshold, birth threshold, and a global speed control.
 
-The app should let a user discover this by moving sliders:
+A "phase strip" along the bottom of the canvas lights up one of four labels each tick — **share / discover / cull / birth** — so the rule is visible while it runs.
+
+## The CA rule, in four phases per tick
 
 ```text
-fast internal mixing + long cycle + weak bridge
-→ scalar interface likely
+1. SHARE   (deterministic, every tick)
+   r_i ← r_i + α · Σ_{j alive neighbor of i} (r_j − r_i)
 
-short cycle or slow internal mixing
-→ finite-band memory
+2. DISCOVER (stochastic, every tick)
+   each cell: with probability p_food, r_i += ε
 
-metastable internal basins
-→ basin-interpretable finite-band regime
+3. CULL    (stochastic, every T_db ticks; T_db ≈ 10)
+   each alive cell with r < r_death:
+     die with probability β · (r_death − r) / r_death
 
-several retained modes without clean basin semantics
-→ cone/vector-valued plural regime
-
-strong bridge leakage
-→ boundary integrity compromised
+4. BIRTH   (stochastic, every T_db ticks)
+   each empty cell with ≥ k alive neighbors having r > r_birth:
+     born with probability γ; new r = r_seed
 ```
 
-## Recommended first milestone
+Birth and death fire on a slower cadence than sharing so the alive subgraph is quasi-static for ~10 share ticks at a stretch. That separation of timescales is what makes the spectral picture stable enough to point at.
 
-Build an MVP static web app with:
+## Where the spectral gap comes from
 
-- a small finite graph or grid, preferably 25–64 states;
-- three presets: scalar block, one-well finite-band artifact, weak-coupling failure;
-- sliders for internal mixing, bridge coupling, killing intensity, and cycle length;
-- a gridworld visualization;
-- simplified spectral diagnostics;
-- a cautious suggested regime label.
+The **share** step alone is a linear update on the resource vector restricted to the alive subgraph. It is governed by the graph Laplacian `L` of that subgraph. Its smallest eigenvalue `λ_1 = 0` corresponds to the constant mode (and is degenerate when there are multiple connected components). The next eigenvalue `λ_2` is the **Fiedler value**, equal to the spectral gap, and its eigenvector `φ_2` is the **Fiedler vector** — positive on one half of the (largest) component and negative on the other.
+
+The MVP reports `λ_2` two ways at once:
+
+- as a number, computed periodically from the current alive subgraph;
+- as a slope, fitted live to the convergence plot.
+
+Agreement between the two — and the way both move when sliders move — is the pedagogical point.
+
+## Suggested stack
+
+```text
+React + TypeScript + Vite
+HTML5 Canvas for the gridworld (faster than SVG at 400 cells × 60 fps)
+A small symmetric eigensolver for the smallest two eigenvalues of L
+```
+
+Deployment is GitHub Pages via the workflow in `.github/workflows/deploy.yml`.
+
+## Non-goals for the MVP
+
+- Do **not** implement AM-GM diagnostics (compression strength, scalarity defect, leakage ratio, regime labels). Those belong to a later phase; see `docs/roadmap.md`.
+- Do **not** support user click-to-paint interventions in the MVP. Observer mode only.
+- Do **not** support arbitrary partitioning by the user. The only partition shown is the Fiedler cut.
+- Do **not** chase realism beyond what the rule already encodes. This is a math sandbox, not an ecology simulator.
 
 ## Repository contents
 
 ```text
 AGENTS.md                         Coding-agent instructions and guardrails
-README.md                         Project overview
-docs/amgm_context.md              Short AM-GM context packet for implementers
-docs/spec.md                      Product/design spec
-docs/model_notes.md               Killed Markov model and diagnostic conventions
-docs/presets.md                   Preset scenarios and expected behavior
-docs/diagnostics.md               MVP diagnostic definitions
-docs/ui_copy.md                   Suggested explanatory copy and tooltips
+README.md                         Project overview (this file)
+docs/spec.md                      Product/design spec for the CA
+docs/model_notes.md               CA rule, Laplacian, Fiedler conventions
+docs/diagnostics.md               Spectral diagnostics (gap, convergence fit)
+docs/presets.md                   Preset configurations and expected behavior
 docs/acceptance_criteria.md       MVP acceptance criteria and tests
-docs/project_context_packet.md    What context to give coding agents
-prompts/coding_agent_prompt.md    First milestone prompt for an agent
+docs/ui_copy.md                   Suggested explanatory copy and tooltips
+docs/roadmap.md                   Phase 2+ features and future parameters
+docs/amgm_context.md              Long-term AM-GM context (future phase)
+docs/amgm_from_scratch.md         Long-form AM-GM primer (future phase)
+docs/project_context_packet.md    Context briefing for coding agents
+prompts/coding_agent_prompt.md    First milestone prompt (now stale; see spec.md)
 assets/whiteboard_sketch.jpg      Whiteboard sketch motivating the layout
-src/.gitkeep                      Placeholder for app source
-public/.gitkeep                   Placeholder for static assets
+src/                              App source
+public/                           Static assets
 ```
-
-## Suggested stack
-
-Recommended, but not mandatory:
-
-```text
-React + TypeScript + Vite
-SVG or Canvas for the gridworld
-D3, Plotly, or custom SVG for small plots
-A small JS linear algebra library, or symmetric-matrix routines for MVP
-```
-
-Keep deployment simple: GitHub Pages, Netlify, or Vercel.
-
-## Non-goals for MVP
-
-- Do not implement the full AM-GM typology.
-- Do not build a biological model.
-- Do not build a general cellular automaton framework.
-- Do not implement Document 3-style estimation from data.
-- Do not claim final individuality assignments.
-
-Use diagnostic language such as “scalar interface likely,” “finite-band memory,” or “boundary integrity compromised,” not “this is an individual.”

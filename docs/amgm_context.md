@@ -1,6 +1,9 @@
 # AM-GM Context for Implementers
 
-This is the minimum conceptual background needed to build the simulation. The coding agent should not need the full internal document suite.
+> **Status: Phase 3 context, not the current build target.**
+> The MVP described in `README.md`, `docs/spec.md`, `docs/model_notes.md`, and `docs/diagnostics.md` does **not** implement AM-GM diagnostics. The current MVP earns the right to talk about spectral gaps first; AM-GM language is layered on top in Phase 3 (see `docs/roadmap.md`). Read this file only when implementing that phase.
+
+This is the minimum conceptual background needed for the eventual AM-GM diagnostics layer. The coding agent should not need the full internal document suite.
 
 ## Program idea
 

@@ -1,152 +1,85 @@
 # Diagnostics
 
-This document defines simplified diagnostics for the MVP. These are pedagogical proxies, not final AM-GM theorem-level definitions.
+The MVP's entire diagnostic surface is three numbers and one overlay, all derived from the alive-subgraph graph Laplacian `L` and the running resource vector `r(t)`.
 
-## Compression strength
+## Spectral gap `λ_2`
 
-Compute leading decay rates `a1`, `a2` from eigenvalues of `G`.
+Computed every `N_spec` ticks (default 5) from the current alive subgraph:
 
-```text
-compression_strength = (a2 - a1) * Delta
-```
+1. Identify connected components of the alive subgraph by flood fill.
+2. Restrict to the largest component (call it `C`).
+3. Build the symmetric Laplacian `L_C = D_C − A_C`.
+4. Compute the two smallest eigenpairs `(λ_1, φ_1)` and `(λ_2, φ_2)`. `λ_1 = 0` and `φ_1 ∝ 1`. `λ_2` is the gap.
 
-Interpretation:
+Report `λ_2` as a number on the spectral panel. Cache `φ_2` for the Fiedler overlay.
 
-```text
-large  → leading survival mode dominates by cycle time
-small  → finite-band memory may remain
-```
+## Fitted slope
 
-## Scalarity defect
-
-Use a rank-one approximation error.
-
-Conceptual steps:
-
-1. Compute survival profile `q = exp(Delta * G) * ones`.
-2. Compute principal eigenvector `phi1`.
-3. Project `q` onto `phi1`.
-4. Compute relative residual error.
+Maintain a circular buffer of recent samples of `log ‖r⟂(t)‖`, where
 
 ```text
-scalarity_defect = norm(q - projection_onto_phi1(q)) / norm(q)
+r⟂(t) = r(t) − ((1/|C|) Σ_{i ∈ C} r_i(t)) · 1_C
 ```
 
-Interpretation:
+(i.e., subtract the mean over the largest component). After each share tick, push a sample.
+
+Fit a least-squares line over the most recent `W_fit` samples (default 60). The slope is `−α λ_2` to leading order in `α λ_2` (see `docs/model_notes.md`). Report the *gap-equivalent* slope, defined as
 
 ```text
-low   → scalar interface likely
-high  → scalar compression fails or is incomplete
+gap_fit = −slope / α
 ```
 
-Label as “heuristic scalarity defect” in the UI.
+Display "—" when:
 
-## Retained mode count
+- the buffer is not yet full;
+- a `CULL` or `BIRTH` phase fired anywhere within the buffer window (use a flag);
+- the residual standard error of the fit exceeds a tolerance.
 
-Count modes visible relative to the principal mode at time `Delta`.
+## Convergence plot
 
-One simple rule:
+Plot `log ‖r⟂(t)‖` versus `t` for the last `W_plot` (default 240) ticks. Overlay the fitted line whenever a fit is valid. The pedagogical point is that an arbitrary initial condition collapses to a line whose slope is `−α λ_2`.
+
+A small annotation next to the plot reads:
 
 ```text
-mode_i_visible if exp(-(a_i - a_1) * Delta) > tolerance
+gap (fitted) = 0.062 / tick
+gap (Laplacian) = 0.058 / tick
 ```
 
-Then:
+Agreement between the two confirms the model.
 
-```text
-retained_K = number of visible modes
-```
+## Fiedler overlay
 
-Interpretation:
+Two layers on the gridworld canvas:
 
-```text
-K = 1      → scalar candidate
-K > 1      → finite-band memory
-```
+1. **Tint**: each alive cell in `C` is tinted by `sign(φ_2[i])`. Cells with `φ_2[i] > 0` get one hue; cells with `φ_2[i] < 0` get the complementary hue. Tint intensity proportional to `|φ_2[i]|`.
+2. **Contour**: along edges where `φ_2` changes sign between two adjacent alive cells, draw a short perpendicular line segment between their centres. The collection of segments traces the soft Fiedler cut.
 
-## Band defect
+Cells outside the largest component receive a neutral tint so the contour is visually unambiguous.
 
-If retained modes are computed, measure reconstruction error using the first `K` modes.
+## Connected component count
 
-```text
-band_defect = norm(q - reconstruction_using_K_modes) / norm(q)
-```
+Report `|components|`. Flag (badge / warning colour) when count ≥ 2. This is the only way to interpret a sudden jump in `λ_2`: when the graph splits, the largest-component gap can rise (the largest piece is now smaller and possibly more compact) while the second-smallest eigenvalue of the full Laplacian is 0.
 
-This can be deferred if scalarity and `retained_K` are enough for MVP.
+## What the MVP does NOT compute
 
-## Leakage ratio
+Resist the urge to layer the following on the MVP. They belong to later phases (`docs/roadmap.md`):
 
-MVP proxy:
+- compression strength `(a_2 − a_1) · Δ`;
+- scalarity defect;
+- retained mode count K;
+- leakage ratio (cross-boundary weight over gap);
+- basin witness;
+- AM-GM regime labels.
 
-```text
-raw_leakage = sum of transition weights crossing candidate block boundaries
-leakage_ratio = raw_leakage / max(gap_proxy, small_number)
-```
+The MVP teaches one concept by direct observation. Reach for more diagnostics only after that concept lands.
 
-Where `gap_proxy` can be the average within-block compression gap or a global gap.
+## Numerical sanity checks
 
-Interpretation:
+- `λ_1` should be `0` to within `1e-8`.
+- `λ_2 ≥ 0` always.
+- For a connected `C` of size `N`, the sum of eigenvalues equals the trace of `L_C` equals `2 · |edges in C|`.
+- The Fiedler vector should be approximately orthogonal to the constant: `Σ_i φ_2[i] ≈ 0`.
+- The fitted slope and the computed `λ_2` should agree within ~10 % when no birth/death has fired inside the buffer window and the buffer is past the transient.
 
-```text
-low   → boundary perturbatively stable, heuristically
-high  → boundary integrity compromised, heuristically
-```
-
-Label as “heuristic leakage ratio.”
-
-Later versions can replace this with projected leakage into nonprincipal directions.
-
-## Basin witness heuristic
-
-The MVP can use a simple localization rule.
-
-Possible heuristic:
-
-```text
-if retained_K > 1 and retained modes are spatially localized in distinct subregions:
-    basin_witness = present
-elif retained_K > 1:
-    basin_witness = weak/absent
-else:
-    basin_witness = not applicable
-```
-
-This is intentionally rough. The app should present it as a diagnostic suggestion.
-
-## Readout sensitivity proxy
-
-Optional for MVP.
-
-Sample several simple readouts, such as:
-
-- total mass in left cluster;
-- total mass in right cluster;
-- mass near killing zone;
-- basin-specific mass.
-
-Rank a set of sampled survival states. If rankings vary strongly across readouts, mark readout sensitivity high.
-
-This can support the “cone/vector-valued plural regime” label in later versions.
-
-## Suggested regime decision tree
-
-Simple MVP decision tree:
-
-```text
-if leakage_ratio is high:
-    Boundary integrity compromised
-
-else if scalarity_defect is low and compression_strength is high:
-    Scalar interface likely
-
-else if retained_K > 1 and basin_witness is present:
-    Finite-band: basin-interpretable
-
-else if retained_K > 1 and basin_witness is weak/absent:
-    Finite-band: formal/non-diagnostic
-
-else:
-    Ambiguous / transition zone
-```
-
-The thresholds should be adjustable constants, not hard-coded magic throughout the app.
+These checks are useful as `console.warn`-style assertions during development; do not surface them in the user UI.

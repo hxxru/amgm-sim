@@ -1,5 +1,8 @@
 # AM-GM Boundary Program: From Scratch
 
+> **Status: Phase 3+ context, not the current build target.**
+> The MVP (see `README.md`, `docs/spec.md`) is a four-phase cellular automaton that surfaces the spectral gap of an alive-cell graph Laplacian. It does **not** implement AM-GM regime classification. This document is the long-form theoretical destination — read it when planning the AM-GM diagnostics layer in Phase 3 (`docs/roadmap.md`).
+
 This document introduces the AM-GM Boundary program for contributors working on the **Gridworld Boundary Diagnostics** web simulation. It is intended for coding agents and technical collaborators who need enough conceptual context to build the simulator responsibly, without needing to read the full internal memo stack.
 
 The short version:
