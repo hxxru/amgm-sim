@@ -20,6 +20,8 @@ interface Props {
 
   showFiedler: boolean;
   onToggleFiedler: (v: boolean) => void;
+  showEdges: boolean;
+  onToggleEdges: (v: boolean) => void;
   showPhaseStrip: boolean;
   onTogglePhaseStrip: (v: boolean) => void;
 }
@@ -31,142 +33,97 @@ interface SliderRow {
   max: number;
   step: number;
   tooltip: string;
+  log?: boolean;
 }
 
-const BASIC_SLIDERS: SliderRow[] = [
+const BASIC: SliderRow[] = [
+  {
+    key: "slack",
+    label: "Slack  τ_haz / τ_drop",
+    min: -1,
+    max: 2,
+    step: 0.05,
+    tooltip:
+      "Ratio of decay timescale to drop interval. High slack → frequent small drops → energy reaches everywhere → large stable clusters. Low slack → rare big drops → fragmented landscape between bursts.",
+    log: true,
+  },
   {
     key: "alpha",
     label: "Share rate α",
-    min: 0,
-    max: 0.25,
+    min: 0.01,
+    max: 0.24,
     step: 0.005,
     tooltip:
-      "How aggressively each alive cell averages with its alive neighbours. Higher α → faster equilibration → steeper convergence slope.",
+      "Base share coefficient. Stability requires α · max-degree < 1 (≤ 0.25 on a 4-neighbour grid).",
   },
   {
-    key: "pFood",
-    label: "Food rate p_food",
-    min: 0,
-    max: 0.05,
+    key: "mu",
+    label: "Decay μ",
+    min: 0.001,
+    max: 0.1,
     step: 0.001,
     tooltip:
-      "Per-cell-per-tick probability of a forager event. The only source of new resource.",
-  },
-  {
-    key: "rDeath",
-    label: "Death threshold r_death",
-    min: 0,
-    max: 1,
-    step: 0.01,
-    tooltip:
-      "Cells with resource below this start dying. Death probability scales with depletion.",
-  },
-  {
-    key: "rBirth",
-    label: "Birth threshold r_birth",
-    min: 0,
-    max: 1.5,
-    step: 0.01,
-    tooltip:
-      "Neighbours above this threshold count as healthy. Empty cells need k healthy neighbours to be born.",
+      "Per-tick fraction of each cell's resource that evaporates into the reservoir. Larger μ → faster turnover.",
   },
   {
     key: "speed",
     label: "Speed (steps/s)",
     min: 1,
-    max: 120,
+    max: 240,
     step: 1,
-    tooltip:
-      "Steps per wall-clock second. Each step is one phase (SHARE, DISCOVER, CULL, BIRTH).",
+    tooltip: "Phase-steps per wall-clock second.",
   },
 ];
 
-const ADVANCED_SLIDERS: SliderRow[] = [
+const ADVANCED: SliderRow[] = [
   {
-    key: "epsilon",
-    label: "Food pulse ε",
-    min: 0,
-    max: 2,
-    step: 0.05,
-    tooltip: "Magnitude of each forager pulse.",
-  },
-  {
-    key: "beta",
-    label: "Death steepness β",
-    min: 0,
+    key: "vitalityR0",
+    label: "Vitality r₀",
+    min: 0.01,
     max: 1,
     step: 0.01,
-    tooltip:
-      "Maximum per-(death-tick) probability of dying, achieved at r = 0.",
+    tooltip: "Resource level at which a cell is half-engaged (sigmoid centre).",
   },
   {
-    key: "gamma",
-    label: "Birth rate γ",
-    min: 0,
+    key: "vitalityK",
+    label: "Vitality k",
+    min: 1,
+    max: 60,
+    step: 1,
+    tooltip: "Steepness of the vitality sigmoid. Higher k → sharper on/off behaviour.",
+  },
+  {
+    key: "vitalityThreshold",
+    label: "Active threshold",
+    min: 0.01,
     max: 0.5,
-    step: 0.005,
+    step: 0.01,
+    tooltip: "g(r) above this counts as an 'active' cell for the spectral diagnostics.",
+  },
+  {
+    key: "totalEnergyTarget",
+    label: "Total energy (resets)",
+    min: 10,
+    max: 400,
+    step: 5,
     tooltip:
-      "Per-empty-cell-per-(birth-tick) probability of being born given k healthy neighbours.",
-  },
-  {
-    key: "k",
-    label: "Healthy k",
-    min: 1,
-    max: 4,
-    step: 1,
-    tooltip: "Minimum healthy alive neighbours required for birth.",
-  },
-  {
-    key: "rSeed",
-    label: "Seed resource r_seed",
-    min: 0,
-    max: 1.5,
-    step: 0.05,
-    tooltip: "Resource level of a newly born cell.",
-  },
-  {
-    key: "tDb",
-    label: "T_db (cadence)",
-    min: 1,
-    max: 50,
-    step: 1,
-    tooltip:
-      "Number of share-ticks between CULL/BIRTH phases. Larger = more stable topology, cleaner spectral signal.",
-  },
-  {
-    key: "rMax",
-    label: "r_max",
-    min: 0.5,
-    max: 5,
-    step: 0.1,
-    tooltip: "Soft cap on per-cell resource.",
-  },
-  {
-    key: "decay",
-    label: "Per-tick decay",
-    min: 0,
-    max: 0.05,
-    step: 0.001,
-    tooltip:
-      "Per-tick exponential decay applied to every alive cell during SHARE. 0 disables.",
+      "Conserved energy budget. Σ r + reservoir = this. Only takes effect on the next Reset / preset change.",
   },
   {
     key: "recomputeSpectralEvery",
     label: "Spectral cadence",
     min: 1,
-    max: 30,
+    max: 60,
     step: 1,
-    tooltip:
-      "How often to recompute λ₂ and φ₂ (in share-ticks). Smaller = more responsive overlay; larger = cheaper.",
+    tooltip: "Ticks between Laplacian/Fiedler recomputes.",
   },
   {
     key: "fitWindow",
     label: "Fit window",
-    min: 10,
+    min: 6,
     max: 200,
-    step: 5,
-    tooltip:
-      "Number of recent samples used for the slope fit. Larger = smoother fit, slower response to slider changes.",
+    step: 1,
+    tooltip: "Samples used for the slope fit.",
   },
   {
     key: "plotWindow",
@@ -174,40 +131,35 @@ const ADVANCED_SLIDERS: SliderRow[] = [
     min: 60,
     max: 600,
     step: 10,
-    tooltip: "Maximum samples shown on the convergence plot.",
-  },
-  {
-    key: "initialDensity",
-    label: "Init density",
-    min: 0,
-    max: 1,
-    step: 0.05,
-    tooltip:
-      "Random-scatter preset only: probability each cell is initially alive.",
+    tooltip: "Samples shown on the convergence plot.",
   },
 ];
 
 function Slider({
   row,
-  value,
+  rawValue,
   onChange,
 }: {
   row: SliderRow;
-  value: number;
+  rawValue: number;
   onChange: (v: number) => void;
 }) {
+  const isLog = !!row.log;
+  const displayed = isLog ? Math.pow(10, rawValue) : rawValue;
   return (
     <div className="slider-row" title={row.tooltip}>
       <label>
         <span className="slider-label">{row.label}</span>
-        <span className="slider-value">{value.toFixed(row.step < 0.01 ? 3 : 2)}</span>
+        <span className="slider-value">
+          {displayed.toFixed(displayed >= 10 ? 1 : displayed >= 1 ? 2 : 3)}
+        </span>
       </label>
       <input
         type="range"
         min={row.min}
         max={row.max}
         step={row.step}
-        value={value}
+        value={rawValue}
         onChange={(e) => onChange(Number(e.target.value))}
       />
     </div>
@@ -228,14 +180,23 @@ export function SimControls({
   onReset,
   showFiedler,
   onToggleFiedler,
+  showEdges,
+  onToggleEdges,
   showPhaseStrip,
   onTogglePhaseStrip,
 }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const active = presets.find((p) => p.id === activePresetId);
 
-  const setParam = (key: keyof Params) => (v: number) =>
-    onParamsChange({ ...params, [key]: v });
+  const setParam = (row: SliderRow) => (v: number) => {
+    const stored = row.log ? Math.pow(10, v) : v;
+    onParamsChange({ ...params, [row.key]: stored });
+  };
+
+  const rawFor = (row: SliderRow) => {
+    const stored = params[row.key] as number;
+    return row.log ? Math.log10(Math.max(stored, 1e-9)) : stored;
+  };
 
   return (
     <div className="controls">
@@ -264,27 +225,23 @@ export function SimControls({
           <button onClick={onTogglePlay} className="primary">
             {playing ? "⏸ Pause" : "▶ Play"}
           </button>
-          <button onClick={onStep} disabled={playing} title="Advance one phase.">
+          <button onClick={onStep} disabled={playing}>
             Step
           </button>
-          <button onClick={onReset} title="Reset to the preset's initial state.">
-            Reset
-          </button>
-          <button onClick={onReseed} title="New random seed.">
-            Reseed
-          </button>
+          <button onClick={onReset}>Reset</button>
+          <button onClick={onReseed}>Reseed</button>
         </div>
         <p className="seed-readout">seed = {seed}</p>
       </section>
 
       <section>
         <h3>Sliders</h3>
-        {BASIC_SLIDERS.map((row) => (
+        {BASIC.map((row) => (
           <Slider
             key={row.key}
             row={row}
-            value={params[row.key] as number}
-            onChange={setParam(row.key)}
+            rawValue={rawFor(row)}
+            onChange={setParam(row)}
           />
         ))}
       </section>
@@ -298,42 +255,29 @@ export function SimControls({
         </button>
         {advancedOpen && (
           <div className="advanced">
-            {ADVANCED_SLIDERS.map((row) => (
+            {ADVANCED.map((row) => (
               <Slider
                 key={row.key}
                 row={row}
-                value={params[row.key] as number}
-                onChange={setParam(row.key)}
+                rawValue={rawFor(row)}
+                onChange={setParam(row)}
               />
             ))}
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={params.foodOnAliveOnly}
-                onChange={(e) =>
-                  onParamsChange({
-                    ...params,
-                    foodOnAliveOnly: e.target.checked,
-                  })
-                }
-              />
-              Food lands on alive cells only
-            </label>
             <label
               className="toggle"
-              title="Skip CULL and BIRTH phases. Use to measure λ₂ cleanly: pause topology change, let the system settle, then read the slope."
+              title="Pick drop sites with probability ∝ (1 − g(r)) — preferentially feed dormant cells."
             >
               <input
                 type="checkbox"
-                checked={params.freezeTopology}
+                checked={params.dropBiasDormant}
                 onChange={(e) =>
                   onParamsChange({
                     ...params,
-                    freezeTopology: e.target.checked,
+                    dropBiasDormant: e.target.checked,
                   })
                 }
               />
-              Freeze (pauses DISCOVER + CULL + BIRTH; SHARE only — clean λ₂)
+              Bias drops toward dormant cells
             </label>
           </div>
         )}
@@ -348,6 +292,14 @@ export function SimControls({
             onChange={(e) => onToggleFiedler(e.target.checked)}
           />
           Fiedler tint + contour
+        </label>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={showEdges}
+            onChange={(e) => onToggleEdges(e.target.checked)}
+          />
+          Edges (κ baseline + flow glow)
         </label>
         <label className="toggle">
           <input

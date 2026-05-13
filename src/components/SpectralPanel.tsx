@@ -5,6 +5,11 @@ interface Props {
   spectral: SpectralSnapshot | null;
   fit: SlopeFit | null;
   alpha: number;
+  mu: number;
+  totalEnergy: number;
+  slack: number;
+  reservoir: number;
+  activeCount: number;
 }
 
 function fmt(n: number, d = 4): string {
@@ -12,10 +17,23 @@ function fmt(n: number, d = 4): string {
   return n.toFixed(d);
 }
 
-export function SpectralPanel({ spectral, fit, alpha }: Props) {
-  const fittedGap = fit ? -fit.slope / Math.max(alpha, 1e-9) : null;
+export function SpectralPanel({
+  spectral,
+  fit,
+  alpha,
+  mu,
+  totalEnergy,
+  slack,
+  reservoir,
+  activeCount,
+}: Props) {
+  // Slope per *tick* = log(1 − α·λ₂) + log(1 − μ) ≈ −α·λ₂ − μ.
+  // So gap = (−slope − μ) / α.
+  const fittedGap = fit ? (-fit.slope - mu) / Math.max(alpha, 1e-9) : null;
   const lambda2 = spectral?.lambda2 ?? null;
   const componentCount = spectral?.componentCount ?? null;
+  const epsilonDrop = totalEnergy / Math.max(slack, 1e-6);
+  const dropPeriod = totalEnergy > 0 ? epsilonDrop / (mu * Math.max(totalEnergy - reservoir, 1e-6)) : 0;
 
   let agreement = "—";
   if (fittedGap != null && lambda2 != null && lambda2 > 1e-6) {
@@ -29,25 +47,23 @@ export function SpectralPanel({ spectral, fit, alpha }: Props) {
       <table className="spectral-table">
         <tbody>
           <tr>
-            <th title="Second-smallest eigenvalue of the symmetric Laplacian on the largest connected component.">
+            <th title="Second-smallest eigenvalue of the κ-weighted Laplacian on the largest connected active component.">
               λ₂ (Laplacian)
             </th>
             <td>{fmt(lambda2 ?? NaN)}</td>
           </tr>
           <tr>
-            <th title="Convergence-plot slope divided by −α. Matches λ₂ after a transient between birth/death events.">
+            <th title="(−slope − μ) / α, corrected for the per-tick decay contribution.">
               gap (fitted)
             </th>
             <td>{fittedGap == null ? "—" : fmt(fittedGap)}</td>
           </tr>
           <tr>
-            <th title="Relative disagreement between the two gap measurements.">
-              disagreement
-            </th>
+            <th>disagreement</th>
             <td>{agreement}</td>
           </tr>
           <tr>
-            <th title="Connected components of the alive subgraph. Reported gap is for the largest only.">
+            <th title="Connected components of the cells whose vitality g(r) exceeds threshold.">
               components
             </th>
             <td>
@@ -58,17 +74,46 @@ export function SpectralPanel({ spectral, fit, alpha }: Props) {
             </td>
           </tr>
           <tr>
-            <th title="R² of the slope fit. Closer to 1 means the convergence is in the linear regime.">
-              fit R²
-            </th>
+            <th title="R² of the slope fit.">fit R²</th>
             <td>{fit ? fmt(fit.r2, 3) : "—"}</td>
           </tr>
         </tbody>
       </table>
+
+      <h3>Energy budget</h3>
+      <table className="spectral-table">
+        <tbody>
+          <tr>
+            <th title="Conserved: Σ r + reservoir.">total</th>
+            <td>{fmt(totalEnergy, 2)}</td>
+          </tr>
+          <tr>
+            <th title="Mass currently in the atmosphere, waiting to be dropped.">
+              reservoir
+            </th>
+            <td>{fmt(reservoir, 2)}</td>
+          </tr>
+          <tr>
+            <th title="Drop threshold = total / slack.">ε_drop</th>
+            <td>{fmt(epsilonDrop, 2)}</td>
+          </tr>
+          <tr>
+            <th title="Expected number of ticks between drops at steady state.">
+              τ_drop (≈ ticks)
+            </th>
+            <td>{Number.isFinite(dropPeriod) ? fmt(dropPeriod, 1) : "—"}</td>
+          </tr>
+          <tr>
+            <th title="Cells with vitality above threshold.">active cells</th>
+            <td>{activeCount}</td>
+          </tr>
+        </tbody>
+      </table>
       <p className="hint">
-        Drag the share-rate slider. The convergence slope changes and the
-        fitted gap moves with it. After a transient and away from CULL/BIRTH
-        events, the fitted gap matches the Laplacian gap.
+        Drag <strong>Slack</strong> to change how bursty the energy supply
+        is. High slack → many small drops → energy reaches the whole grid
+        → λ₂ stays positive and consistent. Low slack → rare big drops →
+        the system fragments between bursts → components &gt; 1.
       </p>
     </div>
   );

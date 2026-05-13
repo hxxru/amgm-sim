@@ -5,12 +5,16 @@ import { SpectralPanel } from "./components/SpectralPanel";
 import { SimControls } from "./components/SimControls";
 import { makeRng, Rng } from "./sim/rng";
 import {
-  fiedler,
   fitSlope,
+  jacobiEigen,
   orthLogNorm,
   SlopeFit,
 } from "./sim/spectral";
-import { components, buildLaplacian } from "./sim/graph";
+import {
+  activeMask,
+  buildWeightedLaplacian,
+  components,
+} from "./sim/graph";
 import { step } from "./sim/rules";
 import {
   DEFAULT_PARAMS,
@@ -23,80 +27,115 @@ import {
   Params,
   SimState,
   SpectralSnapshot,
+  vitality,
+  zeros2D,
 } from "./sim/state";
 
 const H = 20;
 const W = 20;
 
-function makeInitialState(preset: Preset, params: Params, seed: number): {
-  state: SimState;
-  rng: Rng;
-} {
+function makeInitial(
+  preset: Preset,
+  params: Params,
+  seed: number,
+): { state: SimState; rng: Rng } {
   const rng = makeRng(seed);
-  const grid = preset.makeGrid(H, W, rng, params);
+  const { grid, coupling } = preset.makeInitial(H, W, rng, params);
+  let total = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) total += grid[y][x].r;
+  }
   const state: SimState = {
     grid,
+    coupling,
     H,
     W,
     tick: 0,
     nextPhase: "SHARE",
-    ticksSinceEvent: 0,
+    lastPhase: null,
+    reservoir: 0,
+    totalEnergy: total,
+    edgeFlowH: zeros2D(H, W),
+    edgeFlowV: zeros2D(H, W),
+    drops: [],
     orthSamples: [],
     spectral: null,
-    lastPhase: null,
+    ticksSinceDrop: 0,
   };
   return { state, rng };
 }
 
 function pushSample(samples: OrthSample[], s: OrthSample, max: number): OrthSample[] {
-  const next = samples.length >= max ? samples.slice(samples.length - max + 1) : samples.slice();
+  const next =
+    samples.length >= max
+      ? samples.slice(samples.length - max + 1)
+      : samples.slice();
   next.push(s);
   return next;
 }
 
-function recomputeSpectral(state: SimState): SpectralSnapshot | null {
-  const comps = components(state.grid);
+function recomputeSpectral(state: SimState, params: Params): SpectralSnapshot | null {
+  const mask = activeMask(
+    state.grid,
+    params.vitalityR0,
+    params.vitalityK,
+    params.vitalityThreshold,
+  );
+  const comps = components(mask, state.coupling);
   if (comps.length === 0) return null;
   const largest = comps[0];
   if (largest.length < 2) {
     return {
       computedAtTick: state.tick,
-      largestComponentIndices: largest,
+      activeIndices: largest,
       phi2: largest.map(() => 0),
       lambda2: 0,
       componentCount: comps.length,
     };
   }
-  const L = buildLaplacian(state.grid, largest);
-  const f = fiedler(L);
-  if (!f) return null;
+  const vits: number[] = new Array(state.H * state.W).fill(0);
+  for (let y = 0; y < state.H; y++) {
+    for (let x = 0; x < state.W; x++) {
+      vits[y * state.W + x] = vitality(
+        state.grid[y][x].r,
+        params.vitalityR0,
+        params.vitalityK,
+      );
+    }
+  }
+  const L = buildWeightedLaplacian(largest, state.coupling, vits);
+  const eig = jacobiEigen(L);
+  if (eig.values.length < 2) return null;
+  const phi2 = eig.vectors.map((row) => row[1]);
   return {
     computedAtTick: state.tick,
-    largestComponentIndices: largest,
-    phi2: f.phi2,
-    lambda2: f.lambda2,
+    activeIndices: largest,
+    phi2,
+    lambda2: eig.values[1],
     componentCount: comps.length,
   };
 }
 
-function postShareHousekeeping(
-  state: SimState,
-  params: Params,
-): SimState {
-  const comps = components(state.grid);
+function postShareHousekeeping(state: SimState, params: Params): SimState {
+  const mask = activeMask(
+    state.grid,
+    params.vitalityR0,
+    params.vitalityK,
+    params.vitalityThreshold,
+  );
+  const comps = components(mask, state.coupling);
   const largest = comps[0] ?? [];
-  const W_ = state.W;
   const rs: number[] = [];
   for (const idx of largest) {
-    const y = Math.floor(idx / W_);
-    const x = idx - y * W_;
+    const y = Math.floor(idx / W);
+    const x = idx - y * W;
     rs.push(state.grid[y][x].r);
   }
   const logNorm = orthLogNorm(rs);
   const sample: OrthSample = {
     t: state.tick,
     logNorm,
-    sinceEvent: state.ticksSinceEvent,
+    sinceEvent: state.ticksSinceDrop,
   };
   const orthSamples = pushSample(state.orthSamples, sample, params.plotWindow);
 
@@ -105,11 +144,35 @@ function postShareHousekeeping(
     state.tick > 0 &&
     state.tick % params.recomputeSpectralEvery === 0
   ) {
-    const snap = recomputeSpectral(state);
+    const snap = recomputeSpectral(state, params);
     if (snap) spectral = snap;
   }
 
   return { ...state, orthSamples, spectral };
+}
+
+function maxR(state: SimState): number {
+  let m = 0;
+  for (let y = 0; y < state.H; y++) {
+    for (let x = 0; x < state.W; x++) {
+      if (state.grid[y][x].r > m) m = state.grid[y][x].r;
+    }
+  }
+  return m;
+}
+
+function activeCellCount(state: SimState, params: Params): number {
+  let n = 0;
+  for (let y = 0; y < state.H; y++) {
+    for (let x = 0; x < state.W; x++) {
+      if (
+        vitality(state.grid[y][x].r, params.vitalityR0, params.vitalityK) >=
+        params.vitalityThreshold
+      )
+        n++;
+    }
+  }
+  return n;
 }
 
 export function App() {
@@ -124,53 +187,34 @@ export function App() {
   );
 
   const [simState, setSimState] = useState<SimState>(() => {
-    const { state } = makeInitialState(preset, params, seed);
+    const { state } = makeInitial(preset, params, seed);
     return state;
   });
   const rngRef = useRef<Rng>(makeRng(seed));
 
   const [playing, setPlaying] = useState(true);
   const [showFiedler, setShowFiedler] = useState(true);
+  const [showEdges, setShowEdges] = useState(true);
   const [showPhaseStrip, setShowPhaseStrip] = useState(true);
 
-  // Refs that mirror reactive state for the rAF loop.
   const paramsRef = useRef(params);
   paramsRef.current = params;
   const simStateRef = useRef(simState);
   simStateRef.current = simState;
 
-  // Reset whenever preset changes (load preset defaults + fresh grid).
+  // Reload preset when it changes.
   useEffect(() => {
     const merged = mergeParams(DEFAULT_PARAMS, preset.params);
     setParams(merged);
-    const { state, rng } = makeInitialState(preset, merged, seed);
+    const { state, rng } = makeInitial(preset, merged, seed);
     rngRef.current = rng;
-    const initial = postShareHousekeeping(
-      { ...state, lastPhase: "SHARE", tick: 0 },
-      merged,
-    );
-    setSimState({
-      ...initial,
-      lastPhase: null,
-      tick: 0,
-      nextPhase: "SHARE",
-    });
+    setSimState(state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
-  const doReseed = useCallback(() => {
-    setSeed((s) => (s * 1103515245 + 12345) >>> 0);
-  }, []);
-
-  const doReset = useCallback(() => {
-    const { state, rng } = makeInitialState(preset, params, seed);
-    rngRef.current = rng;
-    setSimState(state);
-  }, [preset, params, seed]);
-
-  // Apply the seed change.
+  // Reseed without changing preset.
   useEffect(() => {
-    const { state, rng } = makeInitialState(preset, paramsRef.current, seed);
+    const { state, rng } = makeInitial(preset, paramsRef.current, seed);
     rngRef.current = rng;
     setSimState(state);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +230,16 @@ export function App() {
     setSimState(after);
   }, []);
 
-  // Main loop.
+  const doReseed = useCallback(() => {
+    setSeed((s) => (s * 1103515245 + 12345) >>> 0);
+  }, []);
+
+  const doReset = useCallback(() => {
+    const { state, rng } = makeInitial(preset, paramsRef.current, seed);
+    rngRef.current = rng;
+    setSimState(state);
+  }, [preset, seed]);
+
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
@@ -198,7 +251,7 @@ export function App() {
       accum += dt;
       const stepMs = 1000 / Math.max(1, paramsRef.current.speed);
       let n = 0;
-      const maxStepsPerFrame = 32;
+      const maxStepsPerFrame = 60;
       while (accum >= stepMs && n < maxStepsPerFrame) {
         accum -= stepMs;
         const cur = simStateRef.current;
@@ -222,14 +275,19 @@ export function App() {
     [simState.orthSamples, params.fitWindow],
   );
 
+  const rMaxHint = maxR(simState);
+  const activeCount = activeCellCount(simState, params);
+  const epsilonDrop = simState.totalEnergy / Math.max(params.slack, 1e-6);
+
   return (
     <div className="app">
       <header className="app-header">
         <h1>Gridworld Boundary Diagnostics</h1>
         <p>
-          A four-phase cellular automaton on a 20×20 grid. The convergence
-          plot's slope is the spectral gap of the current alive subgraph; the
-          Fiedler contour shows that gap as a soft boundary on the plane.
+          A continuous-coupling slime-mold CA. Each cell holds an energy r;
+          coupling is modulated by vitality g(r); decay feeds a reservoir
+          that drips back at random sites. Drag <strong>Slack</strong> to
+          watch the individuality structure fragment or coalesce.
         </p>
       </header>
       <main className="three-pane">
@@ -248,6 +306,8 @@ export function App() {
             onReset={doReset}
             showFiedler={showFiedler}
             onToggleFiedler={setShowFiedler}
+            showEdges={showEdges}
+            onToggleEdges={setShowEdges}
             showPhaseStrip={showPhaseStrip}
             onTogglePhaseStrip={setShowPhaseStrip}
           />
@@ -255,13 +315,24 @@ export function App() {
         <section className="pane pane-grid">
           <SimCanvas
             grid={simState.grid}
+            coupling={simState.coupling}
             lastPhase={simState.lastPhase}
             spectral={simState.spectral}
+            edgeFlowH={simState.edgeFlowH}
+            edgeFlowV={simState.edgeFlowV}
+            drops={simState.drops}
+            vitalityR0={params.vitalityR0}
+            vitalityK={params.vitalityK}
+            rMaxHint={rMaxHint}
             showFiedler={showFiedler}
+            showEdges={showEdges}
             showPhaseStrip={showPhaseStrip}
           />
           <p className="tick-readout">
-            tick {simState.tick} · next: {simState.nextPhase}
+            tick {simState.tick} · next: {simState.nextPhase} · reservoir{" "}
+            {simState.reservoir.toFixed(2)} · ε_drop{" "}
+            {epsilonDrop.toFixed(2)} · active {activeCount}/
+            {simState.H * simState.W}
           </p>
         </section>
         <aside className="pane pane-diagnostics">
@@ -269,13 +340,19 @@ export function App() {
             spectral={simState.spectral}
             fit={slopeFit}
             alpha={params.alpha}
+            mu={params.mu}
+            totalEnergy={simState.totalEnergy}
+            slack={params.slack}
+            reservoir={simState.reservoir}
+            activeCount={activeCount}
           />
           <ConvergencePlot samples={simState.orthSamples} fit={slopeFit} />
         </aside>
       </main>
       <footer className="app-footer">
-        Observational language only. The slope of the convergence plot is the
-        spectral gap of the current alive subgraph — nothing more is claimed.
+        Σ r + reservoir = total energy is invariant by construction.
+        Drops are the only randomness. Cascade speed = α · λ₂ of the
+        current weighted Laplacian.
       </footer>
     </div>
   );

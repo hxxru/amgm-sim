@@ -1,22 +1,44 @@
-import { Grid, linearIndex } from "./state";
+import {
+  CouplingMap,
+  Grid,
+  linearIndex,
+  vitality,
+} from "./state";
 
-const N4: ReadonlyArray<readonly [number, number]> = [
-  [-1, 0],
-  [1, 0],
-  [0, -1],
-  [0, 1],
-];
-
-// Returns connected components of the alive subgraph, sorted largest first.
-// Each component is a list of linear indices (y * W + x).
-export function components(grid: Grid): number[][] {
+// "Active" cells are those whose vitality g(r) is above a threshold.
+// Spectral diagnostics live on the subgraph induced by active cells,
+// using the κ-weighted edge weights (without the vitality multiplier
+// — once a cell is "in", its coupling is whatever κ_ij says).
+export function activeMask(
+  grid: Grid,
+  r0: number,
+  k: number,
+  threshold: number,
+): boolean[][] {
   const H = grid.length;
   const W = grid[0].length;
+  const mask: boolean[][] = Array.from({ length: H }, () => new Array(W).fill(false));
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      mask[y][x] = vitality(grid[y][x].r, r0, k) >= threshold;
+    }
+  }
+  return mask;
+}
+
+// Connected components of the active subgraph, weighted-edge agnostic:
+// we treat any edge with κ > 0 between two active cells as connecting them.
+export function components(
+  mask: boolean[][],
+  coupling: CouplingMap,
+): number[][] {
+  const H = mask.length;
+  const W = mask[0].length;
   const visited = new Uint8Array(H * W);
   const comps: number[][] = [];
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      if (!grid[y][x].alive) continue;
+      if (!mask[y][x]) continue;
       const li = linearIndex(W, x, y);
       if (visited[li]) continue;
       const queue: number[] = [li];
@@ -27,16 +49,19 @@ export function components(grid: Grid): number[][] {
         comp.push(idx);
         const cy = Math.floor(idx / W);
         const cx = idx - cy * W;
-        for (const [dx, dy] of N4) {
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-          if (!grid[ny][nx].alive) continue;
+        const tryEdge = (nx: number, ny: number, kappa: number) => {
+          if (nx < 0 || nx >= W || ny < 0 || ny >= H) return;
+          if (!mask[ny][nx]) return;
+          if (kappa <= 0) return;
           const ni = linearIndex(W, nx, ny);
-          if (visited[ni]) continue;
+          if (visited[ni]) return;
           visited[ni] = 1;
           queue.push(ni);
-        }
+        };
+        if (cx + 1 < W) tryEdge(cx + 1, cy, coupling.kappaH[cy][cx]);
+        if (cx - 1 >= 0) tryEdge(cx - 1, cy, coupling.kappaH[cy][cx - 1]);
+        if (cy + 1 < H) tryEdge(cx, cy + 1, coupling.kappaV[cy][cx]);
+        if (cy - 1 >= 0) tryEdge(cx, cy - 1, coupling.kappaV[cy - 1][cx]);
       }
       comps.push(comp);
     }
@@ -45,12 +70,16 @@ export function components(grid: Grid): number[][] {
   return comps;
 }
 
-// Build the symmetric graph Laplacian L = D - A on a subset of cells.
-export function buildLaplacian(
-  grid: Grid,
+// Build the symmetric weighted graph Laplacian L_w = D_w − A_w on a list
+// of active-cell indices. Edge weight = κ_ij · g(r_i) · g(r_j), so the
+// returned gap matches the share-step contraction rate (divided by α).
+// Pass an array vitalities[index] aligned to coupling.W.
+export function buildWeightedLaplacian(
   indices: number[],
+  coupling: CouplingMap,
+  vitalities: number[],
 ): number[][] {
-  const W = grid[0].length;
+  const W = coupling.W;
   const N = indices.length;
   const local = new Map<number, number>();
   for (let i = 0; i < N; i++) local.set(indices[i], i);
@@ -59,18 +88,22 @@ export function buildLaplacian(
     const idx = indices[i];
     const cy = Math.floor(idx / W);
     const cx = idx - cy * W;
-    let deg = 0;
-    for (const [dx, dy] of N4) {
-      const nx = cx + dx;
-      const ny = cy + dy;
-      if (nx < 0 || nx >= W) continue;
+    const gi = vitalities[idx];
+    const consider = (nx: number, ny: number, kappa: number) => {
+      if (kappa <= 0) return;
       const ni = ny * W + nx;
       const j = local.get(ni);
-      if (j === undefined) continue;
-      L[i][j] = -1;
-      deg += 1;
-    }
-    L[i][i] = deg;
+      if (j === undefined) return;
+      const gj = vitalities[ni];
+      const w = kappa * gi * gj;
+      if (w <= 0) return;
+      L[i][j] -= w;
+      L[i][i] += w;
+    };
+    if (cx + 1 < coupling.W) consider(cx + 1, cy, coupling.kappaH[cy][cx]);
+    if (cx - 1 >= 0) consider(cx - 1, cy, coupling.kappaH[cy][cx - 1]);
+    if (cy + 1 < coupling.H) consider(cx, cy + 1, coupling.kappaV[cy][cx]);
+    if (cy - 1 >= 0) consider(cx, cy - 1, coupling.kappaV[cy - 1][cx]);
   }
   return L;
 }

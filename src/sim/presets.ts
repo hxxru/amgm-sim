@@ -1,173 +1,234 @@
 import { Rng } from "./rng";
 import {
+  CouplingMap,
   Grid,
   makeEmptyGrid,
   Params,
+  uniformCoupling,
 } from "./state";
 
 export interface Preset {
   id: string;
   name: string;
   description: string;
-  makeGrid: (H: number, W: number, rng: Rng, params: Params) => Grid;
+  makeInitial: (
+    H: number,
+    W: number,
+    rng: Rng,
+    params: Params,
+  ) => { grid: Grid; coupling: CouplingMap };
   params: Partial<Params>;
 }
 
 export const DEFAULT_PARAMS: Params = {
-  alpha: 0.15,
-  pFood: 0.01,
-  rDeath: 0.2,
-  rBirth: 0.6,
-  speed: 30,
-
-  epsilon: 0.5,
-  beta: 0.3,
-  gamma: 0.05,
-  k: 2,
-  rSeed: 0.5,
-  tDb: 30,
-  rMax: 2.0,
-  decay: 0,
-  foodOnAliveOnly: true,
-  freezeTopology: false,
-  recomputeSpectralEvery: 5,
+  slack: 10,
+  alpha: 0.18,
+  vitalityR0: 0.15,
+  vitalityK: 18,
+  mu: 0.02,
+  dropBiasDormant: false,
+  speed: 60,
+  vitalityThreshold: 0.15,
+  recomputeSpectralEvery: 8,
   fitWindow: 15,
   plotWindow: 240,
-  initialDensity: 0.35,
-  initialRMin: 0.3,
-  initialRMax: 0.7,
+  totalEnergyTarget: 80, // ~0.2 × cell count if uniformly distributed
 };
 
-function randomScatter(H: number, W: number, rng: Rng, p: Params): Grid {
+// Distribute the target total energy uniformly across all cells.
+function seedUniform(H: number, W: number, total: number): Grid {
   const grid = makeEmptyGrid(H, W);
+  const per = total / (H * W);
   for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) grid[y][x].r = per;
+  }
+  return grid;
+}
+
+// Concentrate the target total at one (or a few) seed cells.
+function seedAt(H: number, W: number, total: number, seeds: [number, number][]): Grid {
+  const grid = makeEmptyGrid(H, W);
+  const per = total / seeds.length;
+  for (const [x, y] of seeds) grid[y][x].r = per;
+  return grid;
+}
+
+// Build a coupling map with a single low-κ "ridge" along a column.
+function couplingWithVerticalRidge(
+  H: number,
+  W: number,
+  ridgeX: number,
+  insideKappa: number,
+  ridgeKappa: number,
+): CouplingMap {
+  const map = uniformCoupling(H, W, insideKappa);
+  // Horizontal edges that cross the ridge get the lower coupling.
+  for (let y = 0; y < H; y++) {
+    if (ridgeX - 1 >= 0 && ridgeX - 1 < W - 1)
+      map.kappaH[y][ridgeX - 1] = ridgeKappa;
+  }
+  return map;
+}
+
+// Coupling with two ridges, partitioning the grid into three vertical bands.
+function couplingWithTwoRidges(
+  H: number,
+  W: number,
+  ridge1X: number,
+  ridge2X: number,
+  insideKappa: number,
+  ridgeKappa: number,
+): CouplingMap {
+  const map = uniformCoupling(H, W, insideKappa);
+  for (let y = 0; y < H; y++) {
+    if (ridge1X - 1 >= 0 && ridge1X - 1 < W - 1)
+      map.kappaH[y][ridge1X - 1] = ridgeKappa;
+    if (ridge2X - 1 >= 0 && ridge2X - 1 < W - 1)
+      map.kappaH[y][ridge2X - 1] = ridgeKappa;
+  }
+  return map;
+}
+
+// Coupling with a soft circular "barrier" — κ scales with distance from a
+// chosen ridge polygon. Smoother than the hard ridges above.
+function couplingWithSpot(
+  H: number,
+  W: number,
+  cx: number,
+  cy: number,
+  innerKappa: number,
+  outerKappa: number,
+  radius: number,
+): CouplingMap {
+  const map = uniformCoupling(H, W, outerKappa);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W - 1; x++) {
+      const mx = x + 0.5;
+      const my = y;
+      const d = Math.hypot(mx - cx, my - cy);
+      const t = Math.max(0, Math.min(1, 1 - d / radius));
+      map.kappaH[y][x] = outerKappa + (innerKappa - outerKappa) * t;
+    }
+  }
+  for (let y = 0; y < H - 1; y++) {
     for (let x = 0; x < W; x++) {
-      if (rng() < p.initialDensity) {
-        grid[y][x].alive = true;
-        grid[y][x].r =
-          p.initialRMin + rng() * (p.initialRMax - p.initialRMin);
-      }
+      const mx = x;
+      const my = y + 0.5;
+      const d = Math.hypot(mx - cx, my - cy);
+      const t = Math.max(0, Math.min(1, 1 - d / radius));
+      map.kappaV[y][x] = outerKappa + (innerKappa - outerKappa) * t;
     }
   }
-  return grid;
+  return map;
 }
 
-// Fill a rectangle [x0, x1) × [y0, y1) with alive cells at resource r0,
-// with a small per-cell jitter so r_perp ≠ 0 at t = 0 (otherwise the
-// convergence plot would have nothing to decay).
-function fillRect(
-  grid: Grid,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-  r0: number,
-  rng: Rng,
-  jitter = 0.2,
-) {
-  const H = grid.length;
-  const W = grid[0].length;
-  for (let y = Math.max(0, y0); y < Math.min(H, y1); y++) {
-    for (let x = Math.max(0, x0); x < Math.min(W, x1); x++) {
-      grid[y][x].alive = true;
-      grid[y][x].r = r0 + jitter * (rng() - 0.5);
-    }
-  }
+function uniformBoard(
+  H: number,
+  W: number,
+  _rng: Rng,
+  params: Params,
+): { grid: Grid; coupling: CouplingMap } {
+  return {
+    grid: seedUniform(H, W, params.totalEnergyTarget),
+    coupling: uniformCoupling(H, W, 1.0),
+  };
 }
 
-function twinBlobs(H: number, W: number, rng: Rng, _p: Params): Grid {
-  const grid = makeEmptyGrid(H, W);
-  // Two 6×6 blobs with a thin 1-row × 3-col neck between them.
-  fillRect(grid, 2, 7, 8, 13, 0.5, rng);
-  fillRect(grid, 12, 7, 18, 13, 0.5, rng);
-  fillRect(grid, 8, 10, 12, 11, 0.5, rng);
-  return grid;
+function singleSpring(
+  H: number,
+  W: number,
+  _rng: Rng,
+  params: Params,
+): { grid: Grid; coupling: CouplingMap } {
+  return {
+    grid: seedAt(H, W, params.totalEnergyTarget, [[Math.floor(W / 2), Math.floor(H / 2)]]),
+    coupling: uniformCoupling(H, W, 1.0),
+  };
 }
 
-function singleNeck(H: number, W: number, rng: Rng, _p: Params): Grid {
-  const grid = makeEmptyGrid(H, W);
-  fillRect(grid, 2, 8, 18, 12, 0.5, rng);
-  for (const x of [9, 10]) {
-    grid[8][x].alive = false;
-    grid[11][x].alive = false;
-    grid[8][x].r = 0;
-    grid[11][x].r = 0;
-  }
-  return grid;
+function twinBlocks(
+  H: number,
+  W: number,
+  _rng: Rng,
+  params: Params,
+): { grid: Grid; coupling: CouplingMap } {
+  return {
+    grid: seedUniform(H, W, params.totalEnergyTarget),
+    coupling: couplingWithVerticalRidge(H, W, Math.floor(W / 2), 1.0, 0.05),
+  };
 }
 
-function archipelago(H: number, W: number, rng: Rng, _p: Params): Grid {
-  const grid = makeEmptyGrid(H, W);
-  fillRect(grid, 1, 1, 5, 5, 0.5, rng);
-  fillRect(grid, 14, 2, 19, 6, 0.5, rng);
-  fillRect(grid, 3, 13, 8, 18, 0.5, rng);
-  fillRect(grid, 13, 14, 18, 19, 0.5, rng);
-  return grid;
+function triBlocks(
+  H: number,
+  W: number,
+  _rng: Rng,
+  params: Params,
+): { grid: Grid; coupling: CouplingMap } {
+  return {
+    grid: seedUniform(H, W, params.totalEnergyTarget),
+    coupling: couplingWithTwoRidges(
+      H,
+      W,
+      Math.floor(W / 3),
+      Math.floor((2 * W) / 3),
+      1.0,
+      0.05,
+    ),
+  };
+}
+
+function softBasin(
+  H: number,
+  W: number,
+  _rng: Rng,
+  params: Params,
+): { grid: Grid; coupling: CouplingMap } {
+  return {
+    grid: seedUniform(H, W, params.totalEnergyTarget),
+    coupling: couplingWithSpot(H, W, W / 2, H / 2, 1.0, 0.1, Math.max(H, W) / 2.5),
+  };
 }
 
 export const PRESETS: Preset[] = [
   {
-    id: "twin-blobs",
-    name: "Twin Blobs",
+    id: "uniform",
+    name: "Uniform Board",
     description:
-      "Two ~6×6 blobs joined by a 2-cell neck. Canonical 'watch the gap appear' preset.",
-    makeGrid: twinBlobs,
-    params: {
-      pFood: 0.005,
-      rDeath: 0.15,
-      rBirth: 0.7,
-      beta: 0.2,
-      gamma: 0.02,
-      k: 3,
-      tDb: 30,
-      speed: 30,
-    },
+      "Identical κ on every edge. Drag the slack slider to see a single connected medium fragment or coalesce based on drop rhythm.",
+    makeInitial: uniformBoard,
+    params: {},
   },
   {
-    id: "single-neck",
-    name: "Single Neck",
+    id: "single-spring",
+    name: "Single Spring",
     description:
-      "Elongated bar with an internal pinch. Fiedler cut sits inside a single connected component.",
-    makeGrid: singleNeck,
-    params: {
-      pFood: 0.005,
-      rDeath: 0.15,
-      rBirth: 0.7,
-      beta: 0.2,
-      gamma: 0.02,
-      k: 3,
-      tDb: 30,
-      speed: 30,
-    },
+      "All initial energy at one cell. Watch the cascade radiate. Energy is then redistributed by the conserved decay/drop cycle.",
+    makeInitial: singleSpring,
+    params: {},
   },
   {
-    id: "archipelago",
-    name: "Archipelago",
+    id: "twin-blocks",
+    name: "Twin Blocks",
     description:
-      "Three or four disconnected blobs. Reported gap refers to the largest component.",
-    makeGrid: archipelago,
-    params: {
-      pFood: 0.005,
-      rDeath: 0.1,
-      rBirth: 0.8,
-      beta: 0.2,
-      gamma: 0.01,
-      k: 3,
-      tDb: 30,
-      speed: 30,
-    },
+      "Two strongly-coupled bands joined by one low-κ ridge. Each block mixes fast; cross-ridge equilibration is slow.",
+    makeInitial: twinBlocks,
+    params: {},
   },
   {
-    id: "random-scatter",
-    name: "Random Scatter",
+    id: "tri-blocks",
+    name: "Three Blocks",
     description:
-      "Uniform alive density. Watch structure emerge from purely local rules.",
-    makeGrid: randomScatter,
-    params: {
-      pFood: 0.015,
-      initialDensity: 0.35,
-      speed: 30,
-    },
+      "Three strongly-coupled vertical bands. Spectral gap reflects the slowest cross-ridge timescale.",
+    makeInitial: triBlocks,
+    params: {},
+  },
+  {
+    id: "soft-basin",
+    name: "Soft Basin",
+    description:
+      "Smooth radial κ — fast mixing near the centre, weakly-coupled periphery. Tests vitality-driven structure.",
+    makeInitial: softBasin,
+    params: {},
   },
 ];
 

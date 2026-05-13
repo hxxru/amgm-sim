@@ -1,7 +1,7 @@
-// Numerical sanity check: load each preset, run with topology frozen so
-// SHARE is the only active phase, and verify the slope-fit gap matches
-// the Laplacian λ₂ within a tight tolerance. This is what the spectral
-// pipeline is supposed to deliver under the user's "Freeze" toggle.
+// Numerical sanity check for the continuous-coupling CA.
+// For each preset: run the sim, verify that conservation holds, and
+// (after suppressing drops) check that the slope-fit gap matches the
+// weighted Laplacian's λ₂ within tolerance.
 
 import { makeRng } from "../src/sim/rng.ts";
 import {
@@ -10,37 +10,74 @@ import {
   PRESETS,
 } from "../src/sim/presets.ts";
 import { step } from "../src/sim/rules.ts";
-import { components, buildLaplacian } from "../src/sim/graph.ts";
-import { fiedler, fitSlope, orthLogNorm } from "../src/sim/spectral.ts";
-import { OrthSample, SimState } from "../src/sim/state.ts";
+import {
+  activeMask,
+  buildWeightedLaplacian,
+  components,
+} from "../src/sim/graph.ts";
+import {
+  fitSlope,
+  jacobiEigen,
+  orthLogNorm,
+} from "../src/sim/spectral.ts";
+import { OrthSample, SimState, vitality, zeros2D } from "../src/sim/state.ts";
 
 const H = 20;
 const W = 20;
 
 for (const preset of PRESETS) {
+  // Use a very-high slack so drops effectively never fire — the run
+  // becomes a pure SHARE + DECAY relaxation, which is the regime where
+  // gap_fit = (−slope − μ)/α should match λ₂ exactly.
+  // Pure-SHARE regime: μ=0 means no decay → reservoir never fills → drops
+  // never fire. The slope-fit is then unbiased and should match λ₂.
   const params = mergeParams(DEFAULT_PARAMS, {
     ...preset.params,
-    freezeTopology: true,
+    mu: 0,
+    slack: 1e-3,
   });
   const rng = makeRng(42);
-  const grid = preset.makeGrid(H, W, rng, params);
+  const { grid, coupling } = preset.makeInitial(H, W, rng, params);
+
+  // Add some initial heterogeneity so r⟂ ≠ 0 even from a uniform seed.
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      grid[y][x].r += 0.05 * (rng() - 0.5);
+    }
+  }
+  let total = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) total += grid[y][x].r;
+
   let state: SimState = {
     grid,
+    coupling,
     H,
     W,
     tick: 0,
     nextPhase: "SHARE",
-    ticksSinceEvent: 0,
+    lastPhase: null,
+    reservoir: 0,
+    totalEnergy: total,
+    edgeFlowH: zeros2D(H, W),
+    edgeFlowV: zeros2D(H, W),
+    drops: [],
     orthSamples: [],
     spectral: null,
-    lastPhase: null,
+    ticksSinceDrop: 0,
   };
 
   const samples: OrthSample[] = [];
-  for (let i = 0; i < 5000; i++) {
+  for (let i = 0; i < 6000; i++) {
     state = step(state, params, rng);
     if (state.lastPhase === "SHARE") {
-      const comps = components(state.grid);
+      const mask = activeMask(
+        state.grid,
+        params.vitalityR0,
+        params.vitalityK,
+        params.vitalityThreshold,
+      );
+      const comps = components(mask, state.coupling);
       const largest = comps[0] ?? [];
       const rs = largest.map((idx) => {
         const y = Math.floor(idx / W);
@@ -50,34 +87,58 @@ for (const preset of PRESETS) {
       samples.push({
         t: state.tick,
         logNorm: orthLogNorm(rs),
-        sinceEvent: state.ticksSinceEvent,
+        sinceEvent: state.ticksSinceDrop,
       });
+      if (samples.length > 200) break;
     }
-    if (samples.length > 400) break;
   }
 
-  const comps = components(state.grid);
+  const finalTotal = state.reservoir + state.grid.flat().reduce((s, c) => s + c.r, 0);
+  const consErr = Math.abs(finalTotal - total);
+
+  const mask = activeMask(
+    state.grid,
+    params.vitalityR0,
+    params.vitalityK,
+    params.vitalityThreshold,
+  );
+  const comps = components(mask, state.coupling);
   const largest = comps[0] ?? [];
-  const L = buildLaplacian(state.grid, largest);
-  const f = fiedler(L);
+  const vits: number[] = new Array(H * W).fill(0);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      vits[y * W + x] = vitality(
+        state.grid[y][x].r,
+        params.vitalityR0,
+        params.vitalityK,
+      );
+    }
+  }
+  const L = buildWeightedLaplacian(largest, state.coupling, vits);
+  const eig = jacobiEigen(L);
+  const lambda2 = eig.values[1] ?? 0;
   const fit = fitSlope(samples, params.fitWindow);
-  const fittedGap = fit ? -fit.slope / params.alpha : null;
-  const lambda2 = f?.lambda2 ?? 0;
+  const fittedGap = fit
+    ? (-fit.slope - params.mu) / Math.max(params.alpha, 1e-9)
+    : null;
   const disagreement =
-    fittedGap != null && lambda2 > 1e-9
+    fittedGap != null && lambda2 > 1e-6
       ? Math.abs(fittedGap - lambda2) / lambda2
       : null;
 
-  const ok =
-    disagreement != null && disagreement < 0.05
-      ? "OK"
-      : disagreement != null
-        ? `LARGE (${(disagreement * 100).toFixed(1)}%)`
-        : "NO FIT";
+  let ok = "NO FIT";
+  if (disagreement != null) {
+    ok = disagreement < 0.05 ? "OK" : `LARGE (${(disagreement * 100).toFixed(1)}%)`;
+  }
 
   console.log(`\n=== ${preset.name} === [${ok}]`);
-  console.log(`  alive: ${largest.length} cells, ${comps.length} components`);
+  console.log(`  active cells   : ${largest.length} of ${comps.length} components`);
+  console.log(`  conservation Δ : ${consErr.toExponential(2)}`);
   console.log(`  λ₂ (Laplacian) : ${lambda2.toFixed(4)}`);
+  console.log(`  slope (fit)    : ${fit ? fit.slope.toFixed(5) : "—"} (expected -α·λ₂ = ${(-params.alpha * lambda2).toFixed(5)})`);
   console.log(`  gap (fit)      : ${fittedGap != null ? fittedGap.toFixed(4) : "—"}`);
   console.log(`  R²             : ${fit ? fit.r2.toFixed(4) : "—"}`);
+  const lastLog = samples[samples.length - 1]?.logNorm;
+  const firstLog = samples[0]?.logNorm;
+  console.log(`  log‖r⟂‖ range  : ${firstLog?.toFixed(3)} → ${lastLog?.toFixed(3)} over ${samples.length} samples`);
 }

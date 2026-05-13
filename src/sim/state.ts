@@ -1,79 +1,144 @@
-// Core state types for the gridworld CA.
+// Core state types for the continuous-coupling slime-mold CA.
+//
+// The previous model carried a binary `alive` flag per cell and discrete
+// CULL/BIRTH events. This model replaces both with one continuous state
+// per cell (`r`) and a vitality function `g(r)` that smoothly modulates
+// each cell's coupling to its neighbours. Birth and death are emergent:
+// a dormant cell with healthy neighbours has resource pulled in by the
+// share rule until its vitality crosses threshold; a starved cell loses
+// vitality and decouples.
 
 export interface Cell {
-  alive: boolean;
   r: number;
 }
 
-export type Grid = Cell[][]; // grid[y][x]
+export type Grid = Cell[][];
 
-export type Phase = "SHARE" | "DISCOVER" | "CULL" | "BIRTH";
+export type Phase = "SHARE" | "DECAY" | "DROP";
 
-export const PHASES_ALL: Phase[] = ["SHARE", "DISCOVER", "CULL", "BIRTH"];
+export const PHASES_ALL: Phase[] = ["SHARE", "DECAY", "DROP"];
 
-export interface Params {
-  // Basic (exposed in the default control panel)
-  alpha: number; // share rate
-  pFood: number; // food discovery probability per cell per tick
-  rDeath: number; // death threshold
-  rBirth: number; // birth-eligibility threshold for "healthy" neighbour
-  speed: number; // steps per second (UI-only)
-
-  // Advanced (hidden behind an "advanced" expander by default)
-  epsilon: number; // food pulse magnitude
-  beta: number; // death steepness (max prob when r = 0)
-  gamma: number; // per-cell-per-(birth-tick) birth probability
-  k: number; // healthy alive neighbours required for birth
-  rSeed: number; // newborn resource
-  tDb: number; // ticks between CULL/BIRTH phases
-  rMax: number; // soft cap on resource (Infinity disables)
-  decay: number; // per-tick exponential decay applied during SHARE
-  foodOnAliveOnly: boolean; // if true, DISCOVER only feeds alive cells
-  freezeTopology: boolean; // if true, CULL/BIRTH are skipped — clean spectral
-  recomputeSpectralEvery: number; // share-ticks between spectral recomputes
-  fitWindow: number; // samples used for the slope fit
-  plotWindow: number; // samples shown on the convergence plot
-  initialDensity: number; // for the Random Scatter preset
-  initialRMin: number;
-  initialRMax: number;
+// Coupling map: intrinsic edge weights κ_ij ∈ [0, 1]. Stored as two 2D
+// arrays — one for horizontal edges (right of each cell), one for vertical
+// (below each cell). kappaH[y][x] is the edge between (x,y) and (x+1,y).
+// Edges along the right and bottom borders are unused (kept for shape).
+export interface CouplingMap {
+  H: number;
+  W: number;
+  kappaH: number[][]; // [H][W-1]   — extended to [H][W] with last column unused
+  kappaV: number[][]; // [H-1][W]   — extended to [H][W] with last row unused
 }
 
 export interface OrthSample {
   t: number;
   logNorm: number;
-  sinceEvent: number; // ticks since last CULL/BIRTH
+  sinceEvent: number; // ticks since last DROP — DROPs reset the linear regime
 }
 
 export interface SpectralSnapshot {
   computedAtTick: number;
-  largestComponentIndices: number[]; // linear (y*W + x) indices
-  phi2: number[]; // length = largestComponentIndices.length
-  lambda2: number;
-  componentCount: number;
+  activeIndices: number[]; // cells with g(r) above the vitality threshold
+  phi2: number[];          // Fiedler vector, same length as activeIndices
+  lambda2: number;         // weighted Laplacian's second-smallest eigenvalue
+  componentCount: number;  // connected components of the active subgraph
+}
+
+export interface DropFlash {
+  x: number;
+  y: number;
+  magnitude: number;
+  framesRemaining: number;
+}
+
+export interface Params {
+  // Headline: the τ_drop/τ_haz "slack" knob.  High slack → frequent small
+  // drops → energy reaches everywhere → large clusters survive.  Low slack
+  // → rare big drops → fragmented dormant landscape between bursts.
+  // Internally: ε_drop = totalEnergy / slack.
+  slack: number;
+
+  // Sharing
+  alpha: number;        // base share rate
+  vitalityR0: number;   // sigmoid centre
+  vitalityK: number;    // sigmoid steepness
+
+  // Hazard
+  mu: number;           // per-tick fractional decay to the reservoir
+
+  // Drop biasing
+  dropBiasDormant: boolean; // if true, weight drop site selection by (1 − g)
+
+  // Run
+  speed: number;        // steps per second (UI)
+
+  // Spectral
+  vitalityThreshold: number;     // g threshold for "active" cells in spectral
+  recomputeSpectralEvery: number;
+  fitWindow: number;
+  plotWindow: number;
+
+  // Initialisation (when reseeding the preset)
+  totalEnergyTarget: number;
 }
 
 export interface SimState {
   grid: Grid;
+  coupling: CouplingMap;
   H: number;
   W: number;
-  tick: number; // number of completed SHARE phases
+
+  tick: number;
   nextPhase: Phase;
-  ticksSinceEvent: number;
+  lastPhase: Phase | null;
+
+  // Conservation: Σ r_i + reservoir = totalEnergy (invariant).
+  reservoir: number;
+  totalEnergy: number;
+
+  // Edge-flow magnitudes captured during the most recent SHARE step.
+  // Stored signed so the canvas can paint a direction gradient.
+  edgeFlowH: number[][];
+  edgeFlowV: number[][];
+
+  // Most recent drops, kept for a few frames so the canvas can flash them.
+  drops: DropFlash[];
+
+  // Convergence-plot bookkeeping.
   orthSamples: OrthSample[];
   spectral: SpectralSnapshot | null;
-  lastPhase: Phase | null; // the phase that produced the current grid
+  ticksSinceDrop: number;
 }
 
 export function makeEmptyGrid(H: number, W: number): Grid {
   return Array.from({ length: H }, () =>
-    Array.from({ length: W }, () => ({ alive: false, r: 0 })),
+    Array.from({ length: W }, () => ({ r: 0 })),
   );
 }
 
 export function cloneGrid(grid: Grid): Grid {
-  return grid.map((row) => row.map((cell) => ({ ...cell })));
+  return grid.map((row) => row.map((cell) => ({ r: cell.r })));
+}
+
+export function zeros2D(H: number, W: number): number[][] {
+  return Array.from({ length: H }, () => new Array(W).fill(0));
 }
 
 export function linearIndex(W: number, x: number, y: number): number {
   return y * W + x;
+}
+
+// Smooth vitality function: sigmoid centred at r0 with steepness k.
+// Continuous, monotonically increasing in r, asymptotes to 0 and 1.
+export function vitality(r: number, r0: number, k: number): number {
+  return 1 / (1 + Math.exp(-k * (r - r0)));
+}
+
+// Uniform coupling map at a chosen κ.
+export function uniformCoupling(H: number, W: number, kappa: number): CouplingMap {
+  const kappaH = Array.from({ length: H }, () => new Array(W).fill(kappa));
+  const kappaV = Array.from({ length: H }, () => new Array(W).fill(kappa));
+  // Border edges aren't real edges — zero them out for cleanliness.
+  for (let y = 0; y < H; y++) kappaH[y][W - 1] = 0;
+  for (let x = 0; x < W; x++) kappaV[H - 1][x] = 0;
+  return { H, W, kappaH, kappaV };
 }
